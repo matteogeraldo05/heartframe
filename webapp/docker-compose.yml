@@ -1,0 +1,48 @@
+# docker compose up -d --build     (run from this folder on the home server)
+# Then publish it to your tailnet only:  sudo tailscale serve --bg 8080
+services:
+  heartframe:
+    build: .
+    image: heartframe-web:local
+    container_name: heartframe
+    restart: unless-stopped
+    # Loopback only: reachable from the server itself (and so from `tailscale serve`),
+    # not from your LAN or the internet.
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      GITHUB_OWNER: "your-github-username"     # <-- change
+      GITHUB_REPO: "heartframe-messages"       # <-- the PRIVATE messages repo
+      GITHUB_BRANCH: "main"
+      COOKIE_SECURE: "true"                    # keep true behind tailscale serve (HTTPS)
+      # REQUIRE_TAILSCALE_LOGIN: "you@github"  # optional extra lock, see guide
+    secrets:
+      - github_token
+      - message_key
+      - admin_password_hash
+      # - ota_public_key                     # optional (OTA, M8): pre-checks firmware signatures
+    volumes:
+      - ./data:/data
+    # Hardening: read-only root filesystem, no Linux capabilities, no privilege escalation.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    user: "1000:1000"
+    mem_limit: 384m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+secrets:
+  github_token:
+    file: ./secrets/github_token
+  message_key:
+    file: ./secrets/message_key
+  admin_password_hash:
+    file: ./secrets/admin_password_hash
+  # ota_public_key:
+  #   file: ./secrets/ota_public_key

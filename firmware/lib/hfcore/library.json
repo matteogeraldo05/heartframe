@@ -1,0 +1,7 @@
+{
+  "name": "hfcore",
+  "version": "1.0.0",
+  "description": "Heart Frame platform-independent core: file formats, crypto, manifest parsing, wake scheduling. Compiles on the ESP32 and on a Linux PC (see test_host/).",
+  "frameworks": "*",
+  "platforms": "*"
+}

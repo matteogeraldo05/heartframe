@@ -1,0 +1,49 @@
+{
+  "name": "heartframe-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Write, schedule and publish messages for the Heart Frame (runs on your home server).",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:web": "vite",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/node/server/index.js",
+    "init-secrets": "node scripts/init-secrets.mjs"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/static": "^10.1.4",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.12.5",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@fontsource/allura": "^5.3.0",
+    "@fontsource/caveat": "^5.3.0",
+    "@fontsource/dancing-script": "^5.3.0",
+    "@fontsource/great-vibes": "^5.3.0",
+    "@fontsource/nunito": "^5.3.0",
+    "@fontsource/pacifico": "^5.3.0",
+    "@fontsource/parisienne": "^5.3.0",
+    "@fontsource/playfair-display": "^5.3.0",
+    "@fontsource/quicksand": "^5.3.0",
+    "@fontsource/sacramento": "^5.3.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.13.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

@@ -1,0 +1,20 @@
+# --- secrets: never commit (GitHub revokes tokens it finds in public repos, and
+#     that would silently break the frame) ---
+webapp/secrets/*
+!webapp/secrets/.gitignore
+*.pem
+*.key
+.env
+.env.*
+
+# --- build output / local data ---
+firmware/.pio/
+firmware/.vscode/
+firmware/test_host/hfcore_tests
+firmware/test_host/vectors/
+webapp/node_modules/
+webapp/dist/
+webapp/data/
+enclosure/stl/
+*.log
+.DS_Store
