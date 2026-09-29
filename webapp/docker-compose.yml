@@ -1,21 +1,26 @@
 # docker compose up -d --build     (run from this folder on the home server)
-# Then publish it to your tailnet only:  sudo tailscale serve --bg 8080
+# Deployed on CasaOS behind a Cloudflare Tunnel (no Tailscale). See README "Deployment".
 services:
   heartframe:
     build: .
     image: heartframe-web:local
     container_name: heartframe
     restart: unless-stopped
-    # Loopback only: reachable from the server itself (and so from `tailscale serve`),
-    # not from your LAN or the internet.
+    # Public DNS for the container. Without this the container inherits the host's
+    # resolver, and if that is Tailscale MagicDNS (100.100.100.100) GitHub lookups
+    # fail with EAI_AGAIN and every publish logs "fetch failed".
+    dns: [1.1.1.1, 9.9.9.9]
+    # Host port 5683 -> container 8080. The Cloudflare Tunnel points at
+    # http://localhost:5683. If cloudflared runs with host networking you can
+    # tighten this to "127.0.0.1:5683:8080" so the LAN can't reach plain HTTP.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "5683:8080"
     environment:
-      GITHUB_OWNER: "your-github-username"     # <-- change
+      GITHUB_OWNER: "matteogeraldo05"
       GITHUB_REPO: "heartframe-messages"       # <-- the PRIVATE messages repo
       GITHUB_BRANCH: "main"
-      COOKIE_SECURE: "true"                    # keep true behind tailscale serve (HTTPS)
-      # REQUIRE_TAILSCALE_LOGIN: "you@github"  # optional extra lock, see guide
+      COOKIE_SECURE: "true"                    # Cloudflare serves HTTPS; set "false" only to log in over plain http://<LAN-IP>:5683
+      # REQUIRE_TAILSCALE_LOGIN: "you@github"  # Tailscale Serve only; not used with Cloudflare Tunnel
     secrets:
       - github_token
       - message_key

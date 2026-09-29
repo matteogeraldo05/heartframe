@@ -7,6 +7,7 @@ import { Login } from "./components/Login";
 import { Queue } from "./components/Queue";
 import { Settings } from "./components/Settings";
 import { loadFonts } from "./render/fonts";
+import { ThemeToggle } from "./theme";
 
 type View = "compose" | "queue" | "library" | "settings";
 
@@ -26,7 +27,7 @@ export function App() {
   }, []);
 
   if (authed === null || !fontsReady) return <div className="center muted">loading…</div>;
-  if (!authed) return <Login onDone={() => setAuthed(true)} />;
+  if (!authed) return (<><ThemeToggle floating /><Login onDone={() => setAuthed(true)} /></>);
 
   const edit = (id: string | null) => { setEditingId(id); setView("compose"); };
   const changed = () => setRefresh((n) => n + 1);
@@ -42,6 +43,7 @@ export function App() {
             </button>
           ))}
           <button className="tab" onClick={() => api.logout().finally(() => setAuthed(false))}>Log out</button>
+          <ThemeToggle />
         </nav>
       </header>
       <main>

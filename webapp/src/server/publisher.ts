@@ -33,7 +33,9 @@ export class Publisher {
           const detail = await this.publishOnce(force);
           if (detail) { this.db.logPublish(true, detail); this.log(`publish: ${detail}`); }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
+          // Node's fetch hides the real reason (DNS, refused, TLS...) in e.cause; include it.
+          const cause = (e as { cause?: { code?: string; message?: string } })?.cause;
+          const msg = (e instanceof Error ? e.message : String(e)) + (cause ? ` (${cause.code ?? cause.message})` : "");
           this.db.logPublish(false, msg);
           this.log(`publish failed: ${msg}`);
         }
