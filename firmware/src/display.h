@@ -21,6 +21,7 @@ void showMessage(const uint8_t* pixels /*15000 bytes, 1 = black*/, const Overlay
 void showWelcome(const Overlay& ov);
 void showSetupNeeded();
 void showPortal(const char* apName, const char* apPass);
+bool portalPassFits(const char* apPass);  // false if it would run into the QR code
 void showChargeMe();
 void showTestPattern();
 void sleep();  // hibernate the controller (call after every refresh)

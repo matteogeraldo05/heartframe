@@ -168,6 +168,22 @@ void showSetupNeeded() {
   refresh();
 }
 
+static int textWidth(const char* s, const GFXfont& f) {
+  int w = 0;
+  for (; *s; s++) {
+    uint8_t c = (uint8_t)*s;
+    if (c < f.first || c > f.last) return 9999;
+    w += f.glyph[c - f.first].xAdvance;
+  }
+  return w;
+}
+
+bool portalPassFits(const char* apPass) {
+  // Same layout as showPortal(): "password: " (regular) then the password (bold) from x=12,
+  // and the QR code starts at x=262.
+  return 12 + textWidth("password: ", FreeSans9pt7b) + textWidth(apPass, FreeSansBold9pt7b) <= 258;
+}
+
 void showPortal(const char* apName, const char* apPass) {
   begin();
   epd.fillScreen(GxEPD_WHITE);

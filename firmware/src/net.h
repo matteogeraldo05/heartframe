@@ -8,6 +8,6 @@ void off();
 bool hasSavedCredentials();
 bool runPortal(const char* apName, const char* apPass);  // blocking captive portal
 void forgetCredentials();
-String apName();                      // "HeartFrame-1A2B"
+String apName();                      // WIFI_SETUP_NAME from config.h
 int rssi();
 }  // namespace Net

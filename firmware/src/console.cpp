@@ -26,6 +26,7 @@ void help() {
       "  epd                     draw a test pattern on the e-paper\n"
       "  sync                    connect and fetch now (verbose)\n"
       "  portal                  open the Wi-Fi setup hotspot\n"
+      "  portal-pass <new>       change the setup hotspot password (8+ chars, no spaces)\n"
       "  sleep <seconds>         deep sleep now (measure sleep current)\n"
       "  wifi-forget             erase saved Wi-Fi\n"
       "  factory-reset           erase secrets, state, cache and Wi-Fi\n"
@@ -106,6 +107,27 @@ void handle(String line, Persisted& st, bool& done) {
     Display::showPortal(ap.c_str(), pass);
     Net::runPortal(ap.c_str(), pass);
     Net::off();
+  } else if (cmd == "portal-pass") {
+    arg.trim();
+    String bad;
+    if (arg.length() < 8 || arg.length() > 63) bad = "must be 8 to 63 characters";
+    for (size_t i = 0; i < arg.length() && !bad.length(); i++) {
+      char c = arg[i];
+      // ; , : \ " would need escaping in the QR code; keep it to plain printable characters.
+      if (c <= ' ' || c > '~' || strchr(";,:\\\"", c)) bad = String("character '") + c + "' not allowed (no spaces or ; , : \\ \")";
+    }
+    if (!bad.length() && !Display::portalPassFits(arg.c_str()))
+      bad = "too long to fit beside the QR code on the setup screen - try 14 characters or fewer";
+    Secrets s;
+    if (!bad.length() && !SecretStore::load(s)) bad = "not provisioned yet - run tools/provision.py first";
+    if (bad.length()) Serial.println("NOT changed: " + bad);
+    else {
+      strlcpy(s.portalPass, arg.c_str(), sizeof(s.portalPass));
+      bool ok = SecretStore::save(s);
+      Serial.println(ok ? "setup password saved. Type `portal` to see it on the screen." : "save FAILED");
+    }
+    memset(&s, 0, sizeof(s));
+    arg = "";
   } else if (cmd == "sleep") {
     uint32_t secs = arg.length() ? arg.toInt() : 600;
     Serial.println("sleeping - measure now. Press the button or reset to wake.");

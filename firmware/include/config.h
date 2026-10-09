@@ -20,7 +20,11 @@ static constexpr int PIN_EPD_RST = 6;      // D6
 static constexpr int PIN_EPD_BUSY = 5;     // D5
 static constexpr int PIN_LED_DATA = 12;    // D12 -> 330 ohm -> first WS2812 DIN
 static constexpr int PIN_LED_PWR = 11;     // D11 -> 2N7000 gate; HIGH = heart LEDs powered
-static constexpr int PIN_BUTTON = 17;      // A1: button to 3V3, 100k pull-down; HIGH = pressed (RTC GPIO, wakes from sleep)
+static constexpr int PIN_BUTTON = 17;      // A1: push button (RTC GPIO, wakes from sleep)
+// What A1 reads while the button is PRESSED. HIGH = normally-open button to 3V3 with the
+// 100k pull-down (the original design). LOW = Matteo's button, which reads HIGH at rest and
+// LOW when pressed. Everything else (console `status`, long press, wake) follows this.
+#define BUTTON_PRESSED_LEVEL LOW
 static constexpr int PIN_VBUS_SENSE = 16;  // A2: USB 5V via 100k/150k divider; HIGH = USB power present (RTC GPIO)
 
 // ----------------------------------------------------------------------------
@@ -76,3 +80,11 @@ static constexpr uint32_t SETUP_SLEEP_S = 6 * 3600;
 #define WELCOME_LINE2 "Your first message is on its way"
 
 #define HF_USER_AGENT "heart-frame/" FW_NAME
+
+// Wi-Fi setup hotspot: the name in the phone's Wi-Fi list, the title of the setup page,
+// and the name the frame uses on the home network. Keep WIFI_SETUP_NAME short (it is
+// printed next to the QR code). The hotspot PASSWORD is not here: it lives in NVS, set by
+// tools/provision.py --portal-pass, or changed later with the console's `portal-pass`.
+#define WIFI_SETUP_NAME "Ashleys-Frame"
+#define WIFI_PAGE_TITLE "Ashley's Frame"
+#define WIFI_HOSTNAME "ashleys-frame"

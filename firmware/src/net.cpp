@@ -34,7 +34,7 @@ void staInit() {
   // credentials saved by the portal are still loaded from NVS at init.
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname("heart-frame");
+  WiFi.setHostname(WIFI_HOSTNAME);
 }
 
 }  // namespace
@@ -93,14 +93,14 @@ bool runPortal(const char* ap, const char* pass) {
   WiFi.persistent(true);
   WiFiManager wm;
   wm.setDebugOutput(false);         // it would print the password you type
-  wm.setTitle("Heart Frame");
+  wm.setTitle(WIFI_PAGE_TITLE);
   std::vector<const char*> menu = {"wifi", "exit"};
   wm.setMenu(menu);                 // no "update" page: nobody can upload firmware through the portal
   wm.setShowInfoUpdate(false);
   wm.setConfigPortalTimeout(PORTAL_TIMEOUT_S);
   wm.setConnectTimeout(20);
   wm.setMinimumSignalQuality(10);
-  wm.setHostname("heart-frame");
+  wm.setHostname(WIFI_HOSTNAME);
   bool ok = wm.startConfigPortal(ap, pass);
   LOGF("portal: %s", ok ? "connected" : "timed out / cancelled");
   return ok;
@@ -114,13 +114,7 @@ void forgetCredentials() {
   WiFi.mode(WIFI_OFF);
 }
 
-String apName() {
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  char buf[20];
-  snprintf(buf, sizeof(buf), "HeartFrame-%02X%02X", mac[4], mac[5]);
-  return String(buf);
-}
+String apName() { return String(WIFI_SETUP_NAME); }
 
 int rssi() { return WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0; }
 
