@@ -27,6 +27,9 @@ static constexpr int PIN_VBUS_SENSE = 16;  // A2: USB 5V via 100k/150k divider; 
 // Heart LEDs (your leftover WS2812B). Colour/brightness come from the manifest,
 // these are only defaults and limits.
 // ----------------------------------------------------------------------------
+// 1 = the heart is fitted (Q1/Q2 switch + 4 WS2812B). 0 = e-paper only: every
+// heart animation is skipped, so the frame just wakes, draws and sleeps.
+#define HAS_HEART_LEDS 0
 static constexpr int LED_COUNT = 4;
 #define LED_ORDER NEO_GRB           // WS2812B = GRB. SK6812 RGBW would be NEO_GRBW (and code changes).
 static constexpr uint8_t LED_ABS_MAX = 200;  // hard ceiling regardless of manifest (current + heat)
@@ -62,6 +65,7 @@ static constexpr int BATT_STEP_PCT = 5;          // redraw the % only when it mo
 static constexpr uint32_t WIFI_TIMEOUT_MS = 15000;
 static constexpr uint32_t HTTP_TIMEOUT_MS = 15000;
 static constexpr uint32_t BUTTON_LONG_MS = 5000;        // hold to open Wi-Fi setup
+static constexpr uint32_t BUTTON_RELEASE_MS = 10000;    // ...then let go within this, or it counts as stuck
 static constexpr uint32_t PORTAL_TIMEOUT_S = 600;       // Wi-Fi setup page closes after 10 min
 static constexpr uint32_t FULL_REFRESH_EVERY_S = 20 * 3600;  // Waveshare: refresh at least every 24 h
 static constexpr uint32_t OFFLINE_ICON_AFTER_S = 48 * 3600;  // small cloud icon if no sync for 2 days

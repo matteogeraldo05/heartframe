@@ -42,13 +42,18 @@ void setup() {
   Serial.begin(115200);
   StateStore::rtcInitIfNeeded();
   const WakeCause wake = Power::wakeCause();
-  // Holding the button 5 s opens Wi-Fi setup; the heart glows once to say "got it".
+  // Holding the button 5 s opens Wi-Fi setup: the heart glows once to say "got it",
+  // and setup starts when she lets go. A button that never lets go (stuck, or the
+  // frame lying on it) is ignored, so it can't keep reopening setup.
+  const bool stuck = Power::buttonStillHeldFromSleep();
+  bool heldTooLong = false;
   bool longPress = false;
-  if (Power::buttonPressed() && Power::buttonHeldMs(BUTTON_LONG_MS) >= BUTTON_LONG_MS) {
-    longPress = true;
+  if (!stuck && Power::buttonPressed() && Power::buttonHeldMs(BUTTON_LONG_MS) >= BUTTON_LONG_MS) {
     hf::Config d;
     hf::defaultConfig(d);
     Leds::start(Pattern::Ack, d.led, d.ledMax, 1500);
+    longPress = Power::buttonReleasedWithin(BUTTON_RELEASE_MS);
+    heldTooLong = !longPress;
   }
   StateStore::load(st);
   Ota::onBoot(st);
@@ -62,6 +67,9 @@ void setup() {
   if (haveManifest) cfg = manifest.cfg; else hf::defaultConfig(cfg);
   hf::applyTimezone(cfg.tz);
   LOGF("wake=%d battery %.2f V %.0f%% usb=%d manifest=%d", (int)wake, batt.volts, batt.pct, batt.usb, haveManifest);
+  if (stuck) LOGF("button has been held since the last sleep: ignoring it (stuck, or something is pressing it)");
+  if (heldTooLong) LOGF("button held for over %lu s: treating it as stuck, not opening Wi-Fi setup",
+                        (unsigned long)((BUTTON_LONG_MS + BUTTON_RELEASE_MS) / 1000));
 
   // 1) Never provisioned: say so on screen and wait for USB / the button.
   if (!provisioned) {

@@ -39,6 +39,10 @@ static bool gaugeWrite(uint8_t reg, uint16_t value) {
   return Wire.endTransmission() == 0;
 }
 
+// Set when we go to sleep with the button held down. RTC memory survives deep
+// sleep but is cleared by a reset or power-on, so RESET always starts fresh.
+RTC_DATA_ATTR static bool s_heldAtSleep = false;
+
 namespace Power {
 
 void earlyInit() {
@@ -62,6 +66,7 @@ void earlyInit() {
 WakeCause wakeCause() {
   switch (esp_sleep_get_wakeup_cause()) {
     case ESP_SLEEP_WAKEUP_TIMER: return WakeCause::Timer;
+    case ESP_SLEEP_WAKEUP_EXT0: return WakeCause::Button;  // a held-down button was let go
     case ESP_SLEEP_WAKEUP_EXT1: {
       uint64_t mask = esp_sleep_get_ext1_wakeup_status();
       if (mask & (1ULL << PIN_BUTTON)) return WakeCause::Button;
@@ -80,6 +85,17 @@ uint32_t buttonHeldMs(uint32_t maxMs) {
   uint32_t start = millis();
   while (buttonPressed() && millis() - start < maxMs) delay(20);
   return millis() - start;
+}
+
+bool buttonReleasedWithin(uint32_t maxMs) {
+  uint32_t start = millis();
+  while (buttonPressed() && millis() - start < maxMs) delay(20);
+  return !buttonPressed();
+}
+
+bool buttonStillHeldFromSleep() {
+  if (!buttonPressed()) s_heldAtSleep = false;  // let go at least once: presses count again
+  return s_heldAtSleep;
 }
 
 Battery readBattery() {
@@ -133,7 +149,13 @@ static void pinsSafeForSleep() {
 }
 
 void deepSleep(uint32_t seconds, bool wakeOnButton, bool wakeOnUsb) {
+  // If the button is already down (stuck, or the frame is lying on it), a
+  // wake-on-press would fire straight away and loop forever, draining the
+  // battery. Wake when it's let go instead.
+  const bool held = wakeOnButton && buttonPressed();
+  s_heldAtSleep = held;
   LOGF("sleeping %lu s (button=%d usb=%d)", (unsigned long)seconds, wakeOnButton, wakeOnUsb);
+  if (held) LOGF("button is held down: it will wake the frame when it's released instead");
   if (Serial) Serial.flush();
   WiFi.mode(WIFI_OFF);
   btStop();
@@ -144,15 +166,18 @@ void deepSleep(uint32_t seconds, bool wakeOnButton, bool wakeOnUsb) {
   // Both wake pins are active-HIGH with external pull-downs, so one EXT1 group
   // (ANY_HIGH) covers them and the RTC peripherals can stay powered down.
   uint64_t mask = 0;
-  if (wakeOnButton) mask |= 1ULL << PIN_BUTTON;
+  if (wakeOnButton && !held) mask |= 1ULL << PIN_BUTTON;
   if (wakeOnUsb && !usbPresent()) mask |= 1ULL << PIN_VBUS_SENSE;  // only arm if not already high
-  if (mask) {
+  if (mask || held) {
     rtc_gpio_pullup_dis((gpio_num_t)PIN_BUTTON);
     rtc_gpio_pulldown_dis((gpio_num_t)PIN_BUTTON);
     rtc_gpio_pullup_dis((gpio_num_t)PIN_VBUS_SENSE);
     rtc_gpio_pulldown_dis((gpio_num_t)PIN_VBUS_SENSE);
-    esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_HIGH);
   }
+  if (mask) esp_sleep_enable_ext1_wakeup(mask, ESP_EXT1_WAKEUP_ANY_HIGH);
+  // EXT0 (wake on LOW = released) keeps the RTC peripherals powered, a few uA,
+  // but only while the button is being held.
+  if (held) esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_BUTTON, 0);
   esp_deep_sleep_start();
 }
 

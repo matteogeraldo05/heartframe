@@ -39,7 +39,9 @@ void status(Persisted& st) {
   Serial.printf("firmware %s build %d (%s)%s\n", FW_NAME, FW_BUILD, HF_BUILD_MARKER,
                 Ota::pendingVerify() ? " [unconfirmed update]" : "");
   Serial.printf("battery: gauge=%s %.3f V %.1f %% rate %.1f %%/h usb=%d\n", b.ok ? "ok" : "MISSING", b.volts, b.pct, b.rate, b.usb);
-  Serial.printf("button=%d  saved wifi=%d  ap=%s\n", Power::buttonPressed(), Net::hasSavedCredentials(), Net::apName().c_str());
+  Serial.printf("button=%d%s  saved wifi=%d  ap=%s\n", Power::buttonPressed(),
+                Power::buttonStillHeldFromSleep() ? " (held since last sleep - ignored)" : "",
+                Net::hasSavedCredentials(), Net::apName().c_str());
   Serial.printf("provisioned=%d owner=%s repo=%s branch=%s token=%s tokgen=%lu portal-pass=%s\n", prov, s.owner, s.repo,
                 s.branch, SecretStore::redact(s.token).c_str(), (unsigned long)s.tokGen,
                 SecretStore::redact(s.portalPass).c_str());
@@ -78,6 +80,8 @@ void handle(String line, Persisted& st, bool& done) {
     bool ok = SecretStore::provisionFromJson(arg.c_str(), err);
     Serial.println(ok ? "PROV OK" : ("PROV ERROR: " + err));
     arg = "";  // drop our copy of the secrets
+  } else if (!HAS_HEART_LEDS && (cmd == "led" || cmd == "pulse" || cmd == "beat")) {
+    Serial.println("no heart LEDs in this build (HAS_HEART_LEDS 0 in config.h)");
   } else if (cmd == "led") {
     if (arg == "off") { Leds::off(); return; }
     int r = 0, g = 0, b = 0, br = 160;

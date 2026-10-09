@@ -18,6 +18,10 @@ WakeCause wakeCause();
 bool usbPresent();
 bool buttonPressed();
 uint32_t buttonHeldMs(uint32_t maxMs);  // how long the button stays pressed (up to maxMs)
+bool buttonReleasedWithin(uint32_t maxMs);  // waits for a release; true if it came in time
+// The button was already down when we last went to sleep and still is: it's stuck,
+// or the frame is lying on it. Treat it as not pressed.
+bool buttonStillHeldFromSleep();
 Battery readBattery();
 // Configure wake sources and sleep. Never returns.
 void deepSleep(uint32_t seconds, bool wakeOnButton, bool wakeOnUsb);

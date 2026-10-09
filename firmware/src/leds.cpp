@@ -86,6 +86,7 @@ static void task(void*) {
 namespace Leds {
 
 void start(Pattern p, const uint8_t rgb[3], uint8_t maxBrightness, uint32_t durationMs) {
+  if (!HAS_HEART_LEDS) return;  // no heart fitted: nothing to animate, don't stay awake for it
   if (g_running) return;
   g_job = Job{p, {rgb[0], rgb[1], rgb[2]}, maxBrightness, durationMs};
   g_running = true;
@@ -101,6 +102,7 @@ void waitDone() {
 }
 
 void solid(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
+  if (!HAS_HEART_LEDS) return;
   waitDone();
   powerOn();
   if (bright > LED_ABS_MAX) bright = LED_ABS_MAX;
@@ -110,6 +112,7 @@ void solid(uint8_t r, uint8_t g, uint8_t b, uint8_t bright) {
 }
 
 void off() {
+  if (!HAS_HEART_LEDS) return;
   waitDone();
   powerOff();
 }
