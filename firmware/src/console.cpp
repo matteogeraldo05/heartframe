@@ -11,6 +11,7 @@
 #include "secrets.h"
 #include "store.h"
 #include "sync.h"
+#include "watchdog.h"
 
 extern "C" const char HF_BUILD_MARKER[];
 
@@ -48,8 +49,9 @@ void status(Persisted& st) {
                 SecretStore::redact(s.portalPass).c_str());
   Serial.printf("state: seq=%llu shown=%s pct=%d icons=0x%02x lastFull=%lu fwBad=%lu fwTrying=%lu\n", st.seq, st.shownId,
                 st.shownPct, st.shownIcons, (unsigned long)st.lastFull, (unsigned long)st.fwBad, (unsigned long)st.fwTrying);
-  Serial.printf("rtc: boots=%lu fails=%ld lastSyncOk=%lu lastErr=%s time=%ld\n", (unsigned long)rtc.boots,
-                (long)rtc.failStreak, (unsigned long)rtc.lastSyncOk, syncErrName((SyncErr)rtc.lastErr), (long)time(nullptr));
+  Serial.printf("rtc: boots=%lu fails=%ld lastSyncOk=%lu lastErr=%s time=%ld watchdog-restarts=%lu\n", (unsigned long)rtc.boots,
+                (long)rtc.failStreak, (unsigned long)rtc.lastSyncOk, syncErrName((SyncErr)rtc.lastErr), (long)time(nullptr),
+                (unsigned long)Watchdog::trips());
   Store::list(Serial);
   memset(&s, 0, sizeof(s));
 }
@@ -161,6 +163,7 @@ void maybeRun(Persisted& st) {
   while (millis() - t0 < 3000 && !Serial.available()) delay(20);
   if (!Serial.available()) return;
   while (Serial.available()) Serial.read();
+  Watchdog::pause();  // someone is at the keyboard; restarted when the console closes
   help();
   bool done = false;
   String line;
@@ -185,6 +188,7 @@ void maybeRun(Persisted& st) {
     delay(5);
   }
   Serial.println("console closed, continuing normal wake");
+  Watchdog::extend(AWAKE_LIMIT_S);
 }
 
 }  // namespace Console

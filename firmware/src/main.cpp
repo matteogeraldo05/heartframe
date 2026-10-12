@@ -18,6 +18,7 @@
 #include "state.h"
 #include "store.h"
 #include "sync.h"
+#include "watchdog.h"
 
 static Persisted st;
 static Secrets sec;
@@ -38,8 +39,16 @@ static void setScreen(const char* s) { strlcpy(st.screen, s, sizeof(st.screen));
 }
 
 void setup() {
+  const bool watchdogTripped = Watchdog::begin(AWAKE_LIMIT_S);
   Power::earlyInit();
   Serial.begin(115200);
+  if (watchdogTripped) {
+    // The last wake hung and was restarted. Don't run the same path again straight
+    // away: sleep until the next check. The button and USB still wake it as usual.
+    LOGF("watchdog: the last wake ran over %lu s and was restarted (%lu since power-on); sleeping",
+         (unsigned long)AWAKE_LIMIT_S, (unsigned long)Watchdog::trips());
+    Power::deepSleep(Power::usbPresent() ? 900 : WATCHDOG_SLEEP_S, true, true);
+  }
   StateStore::rtcInitIfNeeded();
   const WakeCause wake = Power::wakeCause();
   // Holding the button 5 s opens Wi-Fi setup: the heart glows once to say "got it",
@@ -91,7 +100,9 @@ void setup() {
     String ap = Net::apName();
     Display::showPortal(ap.c_str(), sec.portalPass);
     setScreen("portal");
+    Watchdog::extend(PORTAL_TIMEOUT_S + AWAKE_LIMIT_S);  // the setup page may stay open 10 min
     if (!Net::runPortal(ap.c_str(), sec.portalPass)) Net::off();
+    Watchdog::extend(AWAKE_LIMIT_S);
   }
 
   // 4) Network check? (Timer wakes planned as "display a scheduled message" skip it
