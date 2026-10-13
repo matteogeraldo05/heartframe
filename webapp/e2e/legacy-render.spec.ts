@@ -14,7 +14,8 @@ test("older messages render exactly as the previous version drew them", async ({
   await page.goto("/");
   await page.waitForSelector("canvas");
   const diffs = await page.evaluate(async ([docs, golden, photoJs, drawJs]) => {
-    const { renderMessage } = await import("/render/compose.ts");
+    const url = "/render/compose.ts"; // served by the Vite dev server inside the page
+    const { renderMessage } = (await import(/* @vite-ignore */ url)) as { renderMessage: (d: unknown, p: unknown) => { packed: Uint8Array } };
     const photo = eval(photoJs), drawing = eval(drawJs);
     const out: Record<string, number> = {};
     for (const [name, d] of Object.entries(docs as Record<string, any>)) {
