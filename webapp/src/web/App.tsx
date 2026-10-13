@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Editor } from "./components/Editor";
 import { Library } from "./components/Library";
 import { Login } from "./components/Login";
+import { Logo } from "./components/Logo";
 import { Queue } from "./components/Queue";
 import { Settings } from "./components/Settings";
 import { loadFonts } from "./render/fonts";
@@ -35,7 +36,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1><span className="heart">♥</span> Heart Frame</h1>
+        <Logo />
         <nav>
           {(["compose", "queue", "library", "settings"] as View[]).map((v) => (
             <button key={v} className={view === v ? "tab active" : "tab"} onClick={() => (v === "compose" ? edit(null) : setView(v))}>

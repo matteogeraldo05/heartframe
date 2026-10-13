@@ -75,7 +75,10 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--paper); color: var(--ink); }
-h1 { font-family: "Dancing Script", cursive; font-size: 2rem; margin: 0; color: var(--pink-deep); }
+h1 { font-family: "Outfit", system-ui, sans-serif; font-weight: 600; font-size: 1.9rem; letter-spacing: -0.01em; margin: 0; color: var(--pink-deep); }
+h1.logo { display: flex; align-items: center; gap: 10px; }
+h1.logo img { width: 40px; height: 40px; flex: none; }
+.login h1.logo { justify-content: center; }
 h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
 .heart { color: var(--pink); }
 .app { max-width: 1200px; margin: 0 auto; padding: 16px; }

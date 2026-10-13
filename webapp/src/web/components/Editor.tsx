@@ -10,8 +10,8 @@ import { fillHeart, TEMPLATES } from "../render/shapes";
 
 const DEFAULT_DOC: MessageDoc = {
   v: 1,
-  text: { content: "Good morning, beautiful", font: "Dancing Script", size: 0, align: "center", valign: "middle", lineHeight: 1.15, stroke: 0, whiteBehind: false },
-  template: "corner-hearts",
+  text: { content: "", font: "Dancing Script", size: 0, align: "center", valign: "middle", lineHeight: 1.15, stroke: 0, whiteBehind: false },
+  template: "none",
   photo: null,
   drawing: null,
   signature: "",
@@ -325,7 +325,6 @@ export function Editor({ id, onSaved, onDone }: { id: string | null; onSaved: ()
           onPointerUp={onUp}
           onPointerCancel={onUp}
         />
-        <p className="muted">Exactly what the frame will show (1-bit, 400 × 300).</p>
         <div className="actions">
           <button disabled={busy} onClick={run("Saved as draft", async () => {})}>Save draft</button>
           <button disabled={busy} onClick={run("Added to the queue", (sid) => api.queue(sid), true)}>Add to queue</button>
