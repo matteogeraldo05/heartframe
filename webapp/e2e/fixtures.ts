@@ -11,9 +11,9 @@ export const sampleMessages = () => [
 
 const THUMB = readFileSync(new URL("../src/web/public/favicon-192.png", import.meta.url));
 
-export async function fakeApi(page: Page, opts: { messages?: Record<string, unknown>[] } = {}) {
+export async function fakeApi(page: Page, opts: { messages?: Record<string, unknown>[]; uploads?: { info: Record<string, unknown>; data: Buffer }[] } = {}) {
   const messages: Record<string, unknown>[] = opts.messages ?? [];
-  const uploads: { info: Record<string, unknown>; data: Buffer }[] = [];
+  const uploads: { info: Record<string, unknown>; data: Buffer }[] = opts.uploads ?? [];
   let n = 0;
   await page.route("**/api/**", async (route) => {
     const req = route.request();
@@ -29,6 +29,11 @@ export async function fakeApi(page: Page, opts: { messages?: Record<string, unkn
       const info = { id: `u${(++n).toString().padStart(15, "0")}`, kind: body.kind, name: body.name, mime, size: data.length, createdAt: 1, inset: body.kind === "border" ? (body.inset ?? 30) : null, usedBy: [] };
       uploads.push({ info, data });
       return json(info);
+    }
+    const del = /^\/api\/uploads\/(\w+)$/.exec(p);
+    if (del && m === "DELETE") {
+      uploads.splice(uploads.findIndex((x) => x.info.id === del[1]), 1);
+      return json({ ok: true });
     }
     const file = /^\/api\/uploads\/(\w+)\/file$/.exec(p);
     if (file) {

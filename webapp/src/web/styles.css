@@ -149,8 +149,16 @@ button.stamp.active { background: var(--pink-soft); border-color: var(--pink); b
 .badge { align-self: flex-start; font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; background: var(--pink-soft); }
 .badge.shown { background: var(--shown); }
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+.settings-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+ul.uploads { list-style: none; margin: 6px 0 0; padding: 0; }
+li.upload { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--pink-soft); }
+.upload-preview { width: 72px; height: 54px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #222; overflow: hidden; font-size: 1rem; white-space: nowrap; }
+.upload-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .log { margin: 0; padding-left: 18px; font-size: 0.82rem; max-height: 220px; overflow: auto; }
 code { background: var(--pink-soft); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 420px) {
+  .settings { grid-template-columns: 1fr; }
+}
 @media (max-width: 800px) {
   .editor { grid-template-columns: 1fr; }
   .preview { order: -1; }
