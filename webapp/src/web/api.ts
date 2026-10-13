@@ -1,5 +1,5 @@
 // api.ts - tiny fetch wrapper. Every mutating call sends X-HF-CSRF (see server/auth.ts).
-import type { DeviceSettings, MessageFull, MessageSummary, SaveMessageRequest, StatusInfo } from "../shared/types";
+import type { DeviceSettings, MessageFull, MessageSummary, SaveMessageRequest, StatusInfo, UploadInfo, UploadRequest } from "../shared/types";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -32,6 +32,10 @@ export const api = {
   sendNow: (id: string) => call<MessageSummary>("POST", `/api/messages/${id}/send-now`, {}),
   unschedule: (id: string) => call<MessageSummary>("POST", `/api/messages/${id}/unschedule`, {}),
   remove: (id: string) => call<{ ok: true }>("DELETE", `/api/messages/${id}`),
+  favourite: (id: string, favourite: boolean) => call<MessageSummary>("POST", `/api/messages/${id}/favourite`, { favourite }),
+  uploads: () => call<UploadInfo[]>("GET", "/api/uploads"),
+  upload: (u: UploadRequest) => call<UploadInfo>("POST", "/api/uploads", u),
+  removeUpload: (id: string) => call<{ ok: true }>("DELETE", `/api/uploads/${id}`),
   reorder: (ids: string[]) => call<{ ok: true }>("POST", "/api/queue/order", { ids }),
   settings: () => call<DeviceSettings>("GET", "/api/settings"),
   saveSettings: (s: DeviceSettings) => call<DeviceSettings>("PUT", "/api/settings", s),

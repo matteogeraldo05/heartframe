@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run",
     "start": "node dist/node/server/index.js",
-    "init-secrets": "node scripts/init-secrets.mjs"
+    "init-secrets": "node scripts/init-secrets.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

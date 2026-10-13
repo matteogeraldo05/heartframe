@@ -42,7 +42,7 @@ describe("queue", () => {
 
 describe("manifest item selection", () => {
   const row = (id: string, show_at: number | null, status: MessageRow["status"] = "queued"): MessageRow => ({
-    id, title: id, doc: "{}", bitmap: Buffer.alloc(15000), photo: null, status, show_at, queue_pos: 0, surprise: 0, created_at: 1, updated_at: 1,
+    id, title: id, doc: "{}", bitmap: Buffer.alloc(15000), photo: null, status, show_at, queue_pos: 0, surprise: 0, favourite: 0, created_at: 1, updated_at: 1,
   });
   it("keeps only the current (latest past) item plus upcoming ones, oldest first", () => {
     const items = selectItems([row("old", 100), row("current", 200), row("next", 400), row("later", 300), row("draft", null, "draft")], 250);

@@ -6,7 +6,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import type { DeviceSettings, MessageDoc, MessageStatus, MessageSummary } from "../shared/types.js";
+import type { DeviceSettings, MessageDoc, MessageStatus, MessageSummary, UploadKind } from "../shared/types.js";
 
 export interface MessageRow {
   id: string;
@@ -18,8 +18,20 @@ export interface MessageRow {
   show_at: number | null;
   queue_pos: number | null;
   surprise: number;
+  favourite: number;
   created_at: number;
   updated_at: number;
+}
+
+export interface UploadRow {
+  id: string;
+  kind: UploadKind;
+  name: string;
+  file: string;            // generated file name under DATA_DIR/uploads/<kind>/
+  mime: string;
+  size: number;
+  inset: number | null;
+  created_at: number;
 }
 
 export const DEFAULT_SETTINGS: DeviceSettings = {
@@ -68,7 +80,20 @@ export function openDb(dataDir: string) {
     CREATE TABLE IF NOT EXISTS publish_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, ok INTEGER NOT NULL, detail TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS uploads (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('font','stamp','border')),
+      name TEXT NOT NULL,
+      file TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      inset INTEGER,
+      created_at INTEGER NOT NULL
+    );
   `);
+  // Migrations for databases created by older versions (columns can't be added "IF NOT EXISTS").
+  const cols = new Set(db.prepare<[], { name: string }>("PRAGMA table_info(messages)").all().map((c) => c.name));
+  if (!cols.has("favourite")) db.exec("ALTER TABLE messages ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0");
 
   const now = () => Math.floor(Date.now() / 1000);
 
@@ -81,15 +106,22 @@ export function openDb(dataDir: string) {
   function summary(r: MessageRow): MessageSummary {
     return {
       id: r.id, title: r.title, status: status(r), showAt: r.show_at, surprise: !!r.surprise,
-      queuePos: r.queue_pos, hasPhoto: r.photo !== null, createdAt: r.created_at, updatedAt: r.updated_at,
+      queuePos: r.queue_pos, hasPhoto: r.photo !== null, favourite: !!r.favourite, createdAt: r.created_at, updatedAt: r.updated_at,
     };
   }
 
   const q = {
     all: db.prepare<[], MessageRow>("SELECT * FROM messages ORDER BY COALESCE(show_at, 9e15) DESC, created_at DESC"),
     get: db.prepare<[string], MessageRow>("SELECT * FROM messages WHERE id = ?"),
-    insert: db.prepare(`INSERT INTO messages (id,title,doc,bitmap,photo,status,show_at,queue_pos,surprise,created_at,updated_at)
-                        VALUES (@id,@title,@doc,@bitmap,@photo,@status,@show_at,@queue_pos,@surprise,@created_at,@updated_at)`),
+    insert: db.prepare(`INSERT INTO messages (id,title,doc,bitmap,photo,status,show_at,queue_pos,surprise,favourite,created_at,updated_at)
+                        VALUES (@id,@title,@doc,@bitmap,@photo,@status,@show_at,@queue_pos,@surprise,@favourite,@created_at,@updated_at)`),
+    // Starring doesn't count as an edit: updated_at (thumbnail cache key, date sort) stays put.
+    favourite: db.prepare<[number, string]>("UPDATE messages SET favourite = ? WHERE id = ?"),
+    uploads: db.prepare<[], UploadRow>("SELECT * FROM uploads ORDER BY kind, created_at"),
+    upload: db.prepare<[string], UploadRow>("SELECT * FROM uploads WHERE id = ?"),
+    insertUpload: db.prepare(`INSERT INTO uploads (id,kind,name,file,mime,size,inset,created_at)
+                              VALUES (@id,@kind,@name,@file,@mime,@size,@inset,@created_at)`),
+    delUpload: db.prepare<[string]>("DELETE FROM uploads WHERE id = ?"),
     del: db.prepare<[string]>("DELETE FROM messages WHERE id = ?"),
     setting: db.prepare<[string], { value: string }>("SELECT value FROM settings WHERE key = ?"),
     putSetting: db.prepare<[string, string]>("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"),
@@ -119,6 +151,7 @@ export function openDb(dataDir: string) {
       db.prepare(sql).run({ ...fields, __now: now(), __id: id });
     },
     remove(id: string) { q.del.run(id); },
+    setFavourite(id: string, on: boolean) { q.favourite.run(on ? 1 : 0, id); },
     parseDoc(r: MessageRow): MessageDoc { return JSON.parse(r.doc) as MessageDoc; },
 
     getSetting<T>(key: string, fallback: T): T {
@@ -127,6 +160,11 @@ export function openDb(dataDir: string) {
     },
     putSetting(key: string, value: unknown) { q.putSetting.run(key, JSON.stringify(value)); },
     settings(): DeviceSettings { return { ...DEFAULT_SETTINGS, ...this.getSetting<Partial<DeviceSettings>>("device", {}) }; },
+
+    uploads(): UploadRow[] { return q.uploads.all(); },
+    getUpload(id: string): UploadRow | undefined { return q.upload.get(id); },
+    insertUpload(r: UploadRow) { q.insertUpload.run(r); },
+    removeUpload(id: string) { q.delUpload.run(id); },
 
     logPublish(ok: boolean, detail: string) { q.log.run(now(), ok ? 1 : 0, detail.slice(0, 500)); },
     publishLog() { return q.logs.all().map((l) => ({ at: l.at, ok: !!l.ok, detail: l.detail })); },

@@ -86,10 +86,11 @@ header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify
 nav { display: flex; gap: 6px; flex-wrap: wrap; }
 button, select, input, textarea { font: inherit; }
 button { border: 1px solid var(--line); background: var(--field); border-radius: 999px; padding: 6px 14px; cursor: pointer; color: var(--ink); }
-button:hover { background: var(--pink-soft); }
+/* Only on devices that really hover: on phones :hover sticks after a tap and looks like "on". */
+@media (hover: hover) { button:hover { background: var(--pink-soft); } }
 button:disabled { opacity: 0.5; cursor: default; }
 button.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 700; }
-button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+@media (hover: hover) { button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); } }
 button.theme-toggle { min-width: 2.6em; padding: 6px 10px; }
 button.theme-toggle.floating { position: fixed; top: 16px; right: 16px; z-index: 10; }
 .tab.active { background: var(--pink-soft); border-color: var(--pink); font-weight: 700; }
@@ -116,9 +117,28 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .tabs { display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap; }
 .title { font-weight: 700; }
 .preview { display: flex; flex-direction: column; gap: 10px; align-items: center; }
-/* The preview keeps its e-paper colours in both themes: it shows what the real screen looks like. */
-canvas.epaper { width: 100%; max-width: 800px; aspect-ratio: 4 / 3; image-rendering: pixelated; border-radius: 6px; border: 10px solid var(--bezel); outline: 1px solid var(--line); touch-action: none; }
+/* The preview keeps its e-paper colours in both themes: it shows what the real screen looks like.
+ * The white frame lives on the wrapper, so the canvas element is only the drawing surface
+ * (exactly 4:3, and pointer positions map 1:1 onto pixels - see toCanvasPx). */
+.bezel { width: 100%; max-width: 800px; border: 10px solid var(--bezel); border-radius: 6px; outline: 1px solid var(--line); background: var(--bezel); touch-action: none; }
+canvas.epaper { display: block; width: 100%; aspect-ratio: 4 / 3; image-rendering: pixelated; touch-action: none; }
 canvas.epaper.drawing { cursor: crosshair; }
+canvas.epaper.movable { cursor: grab; }
+canvas.epaper.movable:active { cursor: grabbing; }
+.hint { margin: 0; font-size: 0.85rem; color: var(--pink-deep); }
+/* Section headings inside a tab look like the field labels ("Border", "Font"...). */
+.section-label { font-size: 0.9rem; font-weight: 400; margin: 0; }
+fieldset.choices { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px 12px; margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+fieldset.choices legend { font-size: 0.9rem; padding: 0 4px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.fmt-bar { display: flex; gap: 4px; flex-wrap: wrap; }
+button.fmt { min-width: 40px; border-radius: 8px; padding: 6px 10px; font-family: Georgia, "Times New Roman", serif; font-size: 1rem; }
+button.fmt.active { background: var(--pink-soft); border-color: var(--pink); }
+label.file input[type="file"] { padding: 6px; }
+.stamps { display: flex; flex-wrap: wrap; gap: 6px; }
+button.stamp { width: 48px; height: 48px; padding: 4px; border-radius: 10px; display: grid; place-items: center; font-size: 1.5rem; color: var(--pink-deep); }
+button.stamp img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; }
+button.stamp.active { background: var(--pink-soft); border-color: var(--pink); border-width: 2px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .actions input[type="datetime-local"] { width: auto; }
 .item { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--pink-soft); flex-wrap: wrap; }

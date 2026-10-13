@@ -36,7 +36,7 @@ describe("dithering", () => {
   const w = 64, h = 16;
   const gradient = new Float32Array(w * h).map((_, i) => ((i % w) / (w - 1)) * 255);
 
-  for (const algo of ["atkinson", "floyd", "bayer"] as const) {
+  for (const algo of ["atkinson", "floyd", "stucki", "bayer2", "bayer4", "bayer8", "bayer"] as const) {
     it(`${algo}: dark left, light right, ~half black in the middle`, () => {
       const out = dither(gradient, w, h, algo);
       const col = (x: number) => Array.from({ length: h }, (_, y) => out[y * w + x]).reduce((a, b) => a + b, 0) / h;
@@ -47,6 +47,10 @@ describe("dithering", () => {
       expect(mid).toBeLessThan(0.8);
     });
   }
+
+  it('older messages\' "bayer" renders exactly like bayer4', () => {
+    expect(Array.from(dither(gradient, w, h, "bayer"))).toEqual(Array.from(dither(gradient, w, h, "bayer4")));
+  });
 
   it("threshold and invert behave", () => {
     const g = adjust(new Float32Array([0, 255]), 0, 0, 1, true);

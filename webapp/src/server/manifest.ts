@@ -81,9 +81,10 @@ export function buildManifest(db: DB, cfg: Config, now = db.now()): BuiltManifes
       chkUsb: s.checkUsbMin,
       qs: hhmmToMinutes(s.quietStart),
       qe: hhmmToMinutes(s.quietEnd),
-      led: hexToRgb(s.ledColor),
-      ledMax: s.ledMax,
-      ledMs: s.ledMs,
+      // LEDs were removed from the hardware; the firmware treats these as optional.
+      led: hexToRgb(s.ledColor ?? "#ff0848"),
+      ledMax: s.ledMax ?? 160,
+      ledMs: s.ledMs ?? 10000,
       hb: s.heartbeatUrl,
       hbH: s.heartbeatHours,
     },

@@ -1,16 +1,24 @@
 // Editor.tsx - write text, add a photo, draw; see exactly what the e-paper will show.
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { bytesToBase64, HEIGHT, packBits, unpackBits, WIDTH, base64ToBytes } from "../../shared/format";
-import type { MessageDoc, PhotoLayer } from "../../shared/types";
+import { base64ToBytes, bytesToBase64, HEIGHT, packBits, unpackBits, WIDTH } from "../../shared/format";
+import { uploadRef, type MessageDoc, type PhotoLayer } from "../../shared/types";
 import { api } from "../api";
-import { paintEpaper, renderMessage } from "../render/compose";
-import { FONTS, fontInfo } from "../render/fonts";
-import { fillHeart, TEMPLATES } from "../render/shapes";
+import { BorderTab, type BorderDraft } from "../editor/BorderTab";
+import { DEFAULT_TOOLS, DrawTools, type ToolState } from "../editor/DrawTools";
+import { PhotoTab } from "../editor/PhotoTab";
+import { stampMask } from "../editor/stamps";
+import { TextTab } from "../editor/TextTab";
+import { canvasPerCssPx, loadImage, maskToPng, normalisePhoto, toCanvasPx } from "../editor/util";
+import { finishBits, paintEpaper, photoRect, renderMessage } from "../render/compose";
+import { ensureFont, FONTS, fontInfo } from "../render/fonts";
+import { brushOffsets, Layer, type PaintMode, type Rect } from "../render/layer";
+import { pad, TEMPLATES, type Template } from "../render/shapes";
+import { imageMask, loadUploads, uploadedBorder, uploadedFont, useUploadsVersion } from "../render/uploads";
 
 const DEFAULT_DOC: MessageDoc = {
   v: 1,
-  text: { content: "", font: "Dancing Script", size: 0, align: "center", valign: "middle", lineHeight: 1.15, stroke: 0, whiteBehind: false },
+  text: { content: "", font: "Dancing Script", size: 0, align: "center", valign: "middle", lineHeight: 1.15, stroke: 0, background: "none" },
   template: "none",
   photo: null,
   drawing: null,
@@ -18,40 +26,52 @@ const DEFAULT_DOC: MessageDoc = {
 };
 
 const DEFAULT_PHOTO: PhotoLayer = {
-  fit: "cover", zoom: 1, offsetX: 0, offsetY: 0, brightness: 0, contrast: 10, gamma: 1, algo: "atkinson", threshold: 128, sharpen: true, invert: false,
+  fit: "cover", zoom: 1, panX: 0, panY: 0, brightness: 0, contrast: 10, gamma: 1, algo: "atkinson", threshold: 128, sharpen: true, invert: false,
 };
 
-type Tab = "text" | "photo" | "draw" | "style";
-type Brush = "pen" | "white" | "erase" | "heart";
+const EMPTY = new Uint8Array(WIDTH * HEIGHT);
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = () => rej(new Error("could not read that image"));
-    img.src = src;
-  });
+type Tab = "text" | "photo" | "draw" | "border";
+const TAB_LABELS: Record<Tab, string> = { text: "Text", photo: "Photo", draw: "Draw", border: "Border" };
+
+type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+type Drag =
+  | { kind: "paint"; x: number; y: number }
+  | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number }
+  | { kind: "move"; sx: number; sy: number; orig: Rect; handle: Handle | "move" }
+  | { kind: "photo"; sx: number; sy: number; panX: number; panY: number };
+
+const MODES: Partial<Record<ToolState["tool"], PaintMode>> = { pen: "black", white: "white", erase: "erase", dither: "dither" };
+
+function handlePoints(r: Rect): [Handle, number, number][] {
+  const { x, y, w, h } = r;
+  return [["nw", x, y], ["n", x + w / 2, y], ["ne", x + w, y], ["e", x + w, y + h / 2], ["se", x + w, y + h], ["s", x + w / 2, y + h], ["sw", x, y + h], ["w", x, y + h / 2]];
 }
 
-/** Downscale to <= 1200 px and re-encode as JPEG in the browser (strips EXIF/GPS, HEIC fails here). */
-async function normalisePhoto(file: File): Promise<{ img: HTMLImageElement; b64: string }> {
-  const url = URL.createObjectURL(file);
-  try {
-    const src = await loadImage(url).catch(() => {
-      throw new Error("Couldn't read this image. iPhone HEIC photos only open in Safari - export as JPEG or use Safari.");
-    });
-    const scale = Math.min(1, 1200 / Math.max(src.naturalWidth, src.naturalHeight));
-    const c = document.createElement("canvas");
-    c.width = Math.round(src.naturalWidth * scale);
-    c.height = Math.round(src.naturalHeight * scale);
-    c.getContext("2d")!.drawImage(src, 0, 0, c.width, c.height);
-    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode failed"))), "image/jpeg", 0.88));
-    const b64 = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
-    const img = await loadImage(URL.createObjectURL(blob));
-    return { img, b64 };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+function resized(o: Rect, handle: Handle | "move", dx: number, dy: number): Rect {
+  if (handle === "move") return { ...o, x: o.x + dx, y: o.y + dy };
+  let { x, y, w, h } = o;
+  if (handle.includes("w")) { const x2 = x + w; x = Math.min(x + dx, x2 - 1); w = x2 - x; }
+  if (handle.includes("e")) w = Math.max(1, w + dx);
+  if (handle.includes("n")) { const y2 = y + h; y = Math.min(y + dy, y2 - 1); h = y2 - y; }
+  if (handle.includes("s")) h = Math.max(1, h + dy);
+  return { x, y, w, h };
+}
+
+const normRect = (d: { x0: number; y0: number; x1: number; y1: number }): Rect => {
+  const x = Math.floor(Math.min(d.x0, d.x1)), y = Math.floor(Math.min(d.y0, d.y1));
+  return { x, y, w: Math.ceil(Math.max(d.x0, d.x1)) - x, h: Math.ceil(Math.max(d.y0, d.y1)) - y };
+};
+
+/** Older messages may point at a font/border that was deleted since: fall back to the defaults. */
+function normalise(d: MessageDoc): { doc: MessageDoc; lost: string[] } {
+  const lost: string[] = [];
+  const text = { ...d.text };
+  if (!FONTS.some((f) => f.family === text.font) && !uploadedFont(text.font)) { lost.push("font"); text.font = FONTS[0].family; }
+  let template = d.template;
+  if (!TEMPLATES.some((t) => t.id === template) && !uploadedBorder(template)) { lost.push("border"); template = "none"; }
+  const photo = d.photo && d.photo.algo === "bayer" ? { ...d.photo, algo: "bayer4" as const } : d.photo; // same matrix
+  return { doc: { ...d, text, template, photo }, lost };
 }
 
 export function Editor({ id, onSaved, onDone }: { id: string | null; onSaved: () => void; onDone: () => void }) {
@@ -61,117 +81,301 @@ export function Editor({ id, onSaved, onDone }: { id: string | null; onSaved: ()
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
   const [photoB64, setPhotoB64] = useState<string | null | undefined>(undefined); // undefined = unchanged
   const [tab, setTab] = useState<Tab>("text");
-  const [brush, setBrush] = useState<Brush>("pen");
-  const [brushSize, setBrushSize] = useState(4);
+  const [tools, setToolsState] = useState<ToolState>(DEFAULT_TOOLS);
   const [showOverlay, setShowOverlay] = useState(true);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [when, setWhen] = useState("");
-  const [drawTick, setDrawTick] = useState(0);
+  const [tick, setTick] = useState(0);         // repaint after drawing changes (layers live in refs)
+  const [fontTick, setFontTick] = useState(0); // re-render once a bold/italic face has loaded
+  const [draft, setDraft] = useState<BorderDraft | null>(null);
+  const uploadsVersion = useUploadsVersion();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const black = useRef<Uint8Array>(new Uint8Array(WIDTH * HEIGHT));
-  const white = useRef<Uint8Array>(new Uint8Array(WIDTH * HEIGHT));
-  const undo = useRef<{ b: Uint8Array; w: Uint8Array }[]>([]);
-  const last = useRef<{ x: number; y: number } | null>(null);
+  const drawLayer = useRef(new Layer());
+  const borderLayer = useRef(new Layer());
+  const drag = useRef<Drag | null>(null);
+  const marquee = useRef<Rect | null>(null);
+  const panFrame = useRef<{ raf: number; patch: Partial<PhotoLayer> | null }>({ raf: 0, patch: null });
+
+  const editingBorder = tab === "border" && draft !== null;
+  const toolsActive = tab === "draw" || editingBorder;
+  const layer = () => (editingBorder ? borderLayer.current : drawLayer.current);
+  const repaint = () => setTick((t) => t + 1);
 
   // Load an existing message.
   useEffect(() => {
     if (!id) return;
     api.get(id).then(async (m) => {
+      const { doc: d, lost } = normalise(m.doc);
       setTitle(m.title);
-      setDoc(m.doc);
-      if (m.doc.drawing) {
-        black.current = unpackBits(base64ToBytes(m.doc.drawing.black));
-        white.current = unpackBits(base64ToBytes(m.doc.drawing.white));
-      }
+      setDoc(d);
+      if (m.doc.drawing) drawLayer.current.load(unpackBits(base64ToBytes(m.doc.drawing.black)), unpackBits(base64ToBytes(m.doc.drawing.white)));
+      if (lost.length) setNote(`The ${lost.join(" and ")} this message used was deleted; showing the default instead. The saved version is unchanged until you save.`);
       if (m.hasPhoto) setPhoto(await loadImage(`/api/messages/${id}/photo`));
+      repaint();
     }).catch((e: Error) => setNote(e.message));
   }, [id]);
 
-  // Everything except your drawing; recomputed only when the design changes.
-  const base = useMemo(() => renderMessage({ ...doc, drawing: null }, photo), [doc, photo]);
+  // Bold/italic faces load on first use; render again once they're there.
+  useEffect(() => {
+    let live = true;
+    ensureFont(fontInfo(doc.text.font), !!doc.text.bold, !!doc.text.italic).then(() => { if (live) setFontTick((t) => t + 1); }, () => {});
+    return () => { live = false; };
+  }, [doc.text.font, doc.text.bold, doc.text.italic, uploadsVersion]);
 
-  const finalBits = () => {
-    const bits = base.bits.slice();
-    for (let i = 0; i < bits.length; i++) {
-      if (black.current[i]) bits[i] = 1;
-      else if (white.current[i]) bits[i] = 0;
-    }
-    return bits;
+  // A border being drawn: preview the text inside its margin; its pixels are added live below.
+  const draftTemplate = useMemo<Template | undefined>(
+    () => (editingBorder ? { id: "draft", label: "", inset: pad(draft!.inset), draw() {}, mask: EMPTY } : undefined),
+    [editingBorder, draft?.inset],
+  );
+
+  // Everything except your drawing and invert; recomputed only when the design changes.
+  const base = useMemo(
+    () => renderMessage({ ...doc, drawing: null, invert: false }, photo, draftTemplate),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc, photo, draftTemplate, fontTick, uploadsVersion],
+  );
+
+  const currentBits = () => {
+    let bits = base.bits;
+    if (editingBorder) bits = finishBits(bits, borderLayer.current.composite().black, EMPTY, false);
+    const d = drawLayer.current.composite();
+    return finishBits(bits, d.black, d.white, !!doc.invert);
   };
 
+  // Paint the preview (+ selection box and handles on top, which are not part of the image).
   useEffect(() => {
-    if (canvasRef.current) paintEpaper(canvasRef.current, finalBits(), showOverlay);
+    const c = canvasRef.current;
+    if (!c) return;
+    paintEpaper(c, currentBits(), showOverlay);
+    if (!toolsActive || tools.tool !== "select") return;
+    const r = marquee.current ?? layer().float?.to;
+    if (!r) return;
+    const k = canvasPerCssPx(c);
+    const ctx = c.getContext("2d")!;
+    ctx.save();
+    ctx.lineWidth = Math.max(1, 1.5 * k);
+    ctx.strokeStyle = "#ff2f8a";
+    ctx.setLineDash([4 * k, 3 * k]);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    if (!marquee.current) {
+      ctx.setLineDash([]);
+      const hs = 9 * k;
+      for (const [, x, y] of handlePoints(r)) {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+        ctx.strokeRect(x - hs / 2, y - hs / 2, hs, hs);
+      }
+    }
+    ctx.restore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, showOverlay, drawTick]);
+  }, [base, showOverlay, tick, doc.invert, editingBorder, toolsActive, tools.tool]);
 
-  const setText = (patch: Partial<MessageDoc["text"]>) => setDoc((d) => ({ ...d, text: { ...d.text, ...patch } }));
   const setPhotoLayer = (patch: Partial<PhotoLayer>) => setDoc((d) => ({ ...d, photo: { ...(d.photo ?? DEFAULT_PHOTO), ...patch } }));
 
-  // ---- drawing -------------------------------------------------------------
-  const paint = (x: number, y: number) => {
-    const r = Math.max(1, brushSize / 2);
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dy * dy > r * r) continue;
-        const px = Math.round(x + dx), py = Math.round(y + dy);
-        if (px < 0 || py < 0 || px >= WIDTH || py >= HEIGHT) continue;
-        const i = py * WIDTH + px;
-        black.current[i] = brush === "pen" ? 1 : 0;
-        white.current[i] = brush === "white" ? 1 : 0;
+  const setTools = (patch: Partial<ToolState>) => {
+    if (patch.tool && patch.tool !== "select") { layer().commitFloat(); repaint(); }
+    setToolsState((t) => ({ ...t, ...patch }));
+  };
+  const switchTab = (t: Tab) => {
+    drawLayer.current.commitFloat();
+    borderLayer.current.commitFloat();
+    setTab(t);
+    repaint();
+  };
+
+  // ---- history & selection actions ----------------------------------------------
+  const undo = () => { if (layer().undo()) repaint(); };
+  const redo = () => { if (layer().redo()) repaint(); };
+  const applySel = () => { layer().commitFloat(); repaint(); };
+  const cancelSel = () => { layer().cancelFloat(); repaint(); };
+  const deleteSel = () => { layer().deleteFloat(); repaint(); };
+
+  // Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (and Ctrl+Y); Enter / Esc / Delete for a selection.
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (!toolsActive) return;
+    const el = e.target as HTMLElement | null;
+    const typing = el?.closest("textarea, select, input:not([type=range]):not([type=checkbox]):not([type=file])");
+    if (typing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (mod && k === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+    else if (mod && k === "y") { e.preventDefault(); redo(); }
+    else if (layer().float && e.key === "Enter") { e.preventDefault(); applySel(); }
+    else if (layer().float && e.key === "Escape") { e.preventDefault(); cancelSel(); }
+    else if (layer().float && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteSel(); }
+  };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => keyRef.current(e);
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+
+  // ---- pointer: draw, select, move the photo ------------------------------------
+  const offsets = useMemo(() => brushOffsets(tools.size, tools.shape), [tools.size, tools.shape]);
+
+  // Pointer handlers sit on the frame around the canvas: at high device pixel ratios the browser
+  // hit-tests the last sliver of the edge pixels as the frame, and a finger at the edge should still draw.
+  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const c = canvasRef.current!;
+    const p = toCanvasPx(c, e.clientX, e.clientY);
+    if (p.x < 0 || p.y < 0 || p.x >= WIDTH || p.y >= HEIGHT) return; // on the white frame itself
+    const target = e.currentTarget;
+    if (tab === "photo" && photo && doc.photo) {
+      target.setPointerCapture(e.pointerId);
+      const r = photoRect(photo.width, photo.height, doc.photo);
+      drag.current = { kind: "photo", sx: p.x, sy: p.y, panX: r.panX, panY: r.panY };
+      return;
+    }
+    if (!toolsActive) return;
+    target.setPointerCapture(e.pointerId);
+    const L = layer();
+    const px = Math.floor(p.x), py = Math.floor(p.y);
+    if (tools.tool === "stamp") {
+      const s = stampMask(tools.stamp, tools.stampSize);
+      if (!s) { setNote("That stamp was deleted; pick another."); return; }
+      L.checkpoint();
+      L.stamp(s.mask, s.w, s.h, p.x, p.y);
+      repaint();
+      return;
+    }
+    if (tools.tool === "select") {
+      const f = L.float;
+      if (f) {
+        const tol = 10 * canvasPerCssPx(c);
+        const hit = handlePoints(f.to).find(([, hx, hy]) => Math.abs(hx - p.x) <= tol && Math.abs(hy - p.y) <= tol);
+        const inside = p.x >= f.to.x && p.x <= f.to.x + f.to.w && p.y >= f.to.y && p.y <= f.to.y + f.to.h;
+        if (hit || inside) { drag.current = { kind: "move", sx: p.x, sy: p.y, orig: { ...f.to }, handle: hit ? hit[0] : "move" }; return; }
+        L.commitFloat();
+      }
+      drag.current = { kind: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+      marquee.current = null;
+      repaint();
+      return;
+    }
+    L.checkpoint();
+    L.dab(px, py, offsets, MODES[tools.tool]!, tools.amount);
+    drag.current = { kind: "paint", x: px, y: py };
+    repaint();
+  };
+
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const p = toCanvasPx(canvasRef.current!, e.clientX, e.clientY);
+    if (d.kind === "paint") {
+      const px = Math.floor(p.x), py = Math.floor(p.y);
+      if (px === d.x && py === d.y) return;
+      layer().line(d.x, d.y, px, py, offsets, MODES[tools.tool]!, tools.amount);
+      d.x = px; d.y = py;
+      repaint();
+    } else if (d.kind === "marquee") {
+      d.x1 = p.x; d.y1 = p.y;
+      marquee.current = normRect(d);
+      repaint();
+    } else if (d.kind === "move") {
+      const f = layer().float;
+      if (f) { f.to = resized(d.orig, d.handle, p.x - d.sx, p.y - d.sy); repaint(); }
+    } else {
+      // Photo: coalesce to one re-render per frame (dithering the whole image isn't free).
+      panFrame.current.patch = { panX: Math.round(d.panX + p.x - d.sx), panY: Math.round(d.panY + p.y - d.sy), offsetX: undefined, offsetY: undefined };
+      if (!panFrame.current.raf) {
+        panFrame.current.raf = requestAnimationFrame(() => {
+          panFrame.current.raf = 0;
+          if (panFrame.current.patch) setPhotoLayer(panFrame.current.patch);
+        });
       }
     }
   };
-  const stampHeart = (x: number, y: number) => {
-    const c = document.createElement("canvas");
-    c.width = WIDTH; c.height = HEIGHT;
-    const ctx = c.getContext("2d", { willReadFrequently: true })!;
-    fillHeart(ctx, x, y, brushSize * 6);
-    const d = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;
-    for (let i = 0; i < WIDTH * HEIGHT; i++) if (d[i * 4 + 3] > 128) { black.current[i] = 1; white.current[i] = 0; }
-  };
-  const toPixel = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: ((e.clientX - rect.left) * WIDTH) / rect.width, y: ((e.clientY - rect.top) * HEIGHT) / rect.height };
-  };
-  const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (tab !== "draw") return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    undo.current.push({ b: black.current.slice(), w: white.current.slice() });
-    if (undo.current.length > 20) undo.current.shift();
-    const p = toPixel(e);
-    if (brush === "heart") stampHeart(p.x, p.y); else paint(p.x, p.y);
-    last.current = brush === "heart" ? null : p;
-    setDrawTick((t) => t + 1);
-  };
-  const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (tab !== "draw" || !last.current) return;
-    const p = toPixel(e);
-    const steps = Math.ceil(Math.hypot(p.x - last.current.x, p.y - last.current.y));
-    for (let s = 1; s <= steps; s++) paint(last.current.x + ((p.x - last.current.x) * s) / steps, last.current.y + ((p.y - last.current.y) * s) / steps);
-    last.current = p;
-    setDrawTick((t) => t + 1);
-  };
-  const onUp = () => { last.current = null; };
 
-  const drawingForDoc = (): MessageDoc["drawing"] => {
-    const any = black.current.some((v) => v) || white.current.some((v) => v);
-    return any ? { black: bytesToBase64(packBits(black.current)), white: bytesToBase64(packBits(white.current)) } : null;
+  const onUp = () => {
+    const d = drag.current;
+    drag.current = null;
+    if (d?.kind === "marquee") {
+      const r = normRect(d);
+      marquee.current = null;
+      if (Math.abs(d.x1 - d.x0) >= 1 || Math.abs(d.y1 - d.y0) >= 1) layer().lift(r);
+      repaint();
+    }
+  };
+
+  // ---- photo ---------------------------------------------------------------
+  const pickPhoto = async (file: File) => {
+    try {
+      const { img, b64 } = await normalisePhoto(file);
+      setPhoto(img);
+      setPhotoB64(b64);
+      setDoc((d) => ({
+        ...d,
+        photo: d.photo ? { ...d.photo, panX: 0, panY: 0, offsetX: undefined, offsetY: undefined } : DEFAULT_PHOTO,
+        template: d.template === "corner-hearts" ? "none" : d.template,
+      }));
+    } catch (x) { setNote((x as Error).message); }
+  };
+
+  // ---- custom borders --------------------------------------------------------
+  const startBorder = () => {
+    borderLayer.current.load(new Uint8Array(WIDTH * HEIGHT), new Uint8Array(WIDTH * HEIGHT));
+    setDraft({ name: "", inset: 30 });
+    setTools({ tool: "pen" });
+    repaint();
+  };
+  const borderFromImage = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!["png", "jpg", "jpeg"].includes(ext)) { setNote("Choose a PNG or JPEG file."); return; }
+    if (file.size > 2 * 1024 * 1024) { setNote("That file is over 2 MB."); return; }
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await loadImage(url);
+      borderLayer.current.load(imageMask(img, WIDTH, HEIGHT), new Uint8Array(WIDTH * HEIGHT));
+      setDraft({ name: file.name.replace(/\.[^.]+$/, "").slice(0, 60), inset: 30 });
+      setNote(img.naturalWidth === WIDTH && img.naturalHeight === HEIGHT ? "" : `That image is ${img.naturalWidth} × ${img.naturalHeight}; it was stretched to 400 × 300.`);
+      repaint();
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+  const saveBorder = async () => {
+    if (!draft) return;
+    const L = borderLayer.current;
+    L.commitFloat();
+    if (!L.black.some((v) => v)) { setNote("The border is empty - draw something first."); return; }
+    setBusy(true);
+    try {
+      const info = await api.upload({ kind: "border", name: draft.name.trim(), data: await maskToPng(L.black), inset: draft.inset });
+      await loadUploads();
+      setDoc((d) => ({ ...d, template: uploadRef(info.id) }));
+      setDraft(null);
+      setNote(`Border "${info.name}" saved.`);
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   // ---- save & publish ---------------------------------------------------------
   const save = async (): Promise<string> => {
+    const L = drawLayer.current;
+    L.commitFloat();
+    await ensureFont(fontInfo(doc.text.font), !!doc.text.bold, !!doc.text.italic).catch(() => {});
+    const fresh = renderMessage({ ...doc, drawing: null, invert: false }, photo);
+    const bits = finishBits(fresh.bits, L.black, L.white, !!doc.invert);
     const body = {
-      title: title.trim() || doc.text.content.split("\n")[0].slice(0, 60) || "Untitled",
-      doc: { ...doc, drawing: drawingForDoc() },
-      bitmap: bytesToBase64(packBits(finalBits())),
+      title: title.trim() || doc.text.content.split("\n")[0].slice(0, 60).trim() || "Untitled",
+      doc: { ...doc, drawing: L.isEmpty() ? null : { black: bytesToBase64(packBits(L.black)), white: bytesToBase64(packBits(L.white)) } },
+      bitmap: bytesToBase64(packBits(bits)),
       ...(photoB64 !== undefined ? { photo: photoB64 } : {}),
     };
     const saved = msgId ? await api.update(msgId, body) : await api.create(body);
     setMsgId(saved.id);
     setPhotoB64(undefined);
     onSaved();
+    repaint();
     return saved.id;
   };
   const run = (label: string, fn: (id: string) => Promise<unknown>, done = false) => async () => {
@@ -189,142 +393,52 @@ export function Editor({ id, onSaved, onDone }: { id: string | null; onSaved: ()
     }
   };
 
-  const f = fontInfo(doc.text.font);
-  const tooSmall = base.fontPx > 0 && base.fontPx < f.minPx;
+  const L = layer();
+  const toolsPanel = (
+    <DrawTools
+      tools={tools} setTools={setTools}
+      canUndo={L.canUndo} canRedo={L.canRedo} onUndo={undo} onRedo={redo}
+      onClear={() => { L.clear(); repaint(); }} clearLabel={editingBorder ? "Clear border" : "Clear drawing"}
+      floating={!!L.float} onApply={applySel} onCancel={cancelSel} onDelete={deleteSel}
+      borderMode={editingBorder} onNote={setNote}
+    />
+  );
+
+  const canvasClass = ["epaper", toolsActive ? "drawing" : "", tab === "photo" && photo ? "movable" : ""].filter(Boolean).join(" ");
 
   return (
     <div className="editor">
       <section className="controls card">
         <input className="title" placeholder="Title (only you see this)" value={title} onChange={(e) => setTitle(e.target.value)} />
         <div className="tabs">
-          {(["text", "photo", "draw", "style"] as Tab[]).map((t) => (
-            <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+          {(["text", "photo", "draw", "border"] as Tab[]).map((t) => (
+            <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => switchTab(t)}>{TAB_LABELS[t]}</button>
           ))}
         </div>
 
-        {tab === "text" && (
-          <div className="stack">
-            <textarea rows={5} value={doc.text.content} onChange={(e) => setText({ content: e.target.value })} placeholder="Write your message…" />
-            <label>Font
-              <select value={doc.text.font} onChange={(e) => setText({ font: e.target.value })}>
-                {FONTS.map((x) => <option key={x.family} value={x.family}>{x.label}</option>)}
-              </select>
-            </label>
-            <label>Size {doc.text.size === 0 ? `(auto: ${base.fontPx}px)` : `${doc.text.size}px`}
-              <input type="range" min={0} max={140} value={doc.text.size} onChange={(e) => setText({ size: +e.target.value })} />
-            </label>
-            {tooSmall && <p className="warn">This font breaks up below ~{f.minPx}px on e-paper. Use fewer words, a bolder font, or thicken it below.</p>}
-            <label>Thicken (helps thin script fonts) {doc.text.stroke}px
-              <input type="range" min={0} max={4} step={0.5} value={doc.text.stroke} onChange={(e) => setText({ stroke: +e.target.value })} />
-            </label>
-            <label>Line spacing {doc.text.lineHeight.toFixed(2)}
-              <input type="range" min={0.8} max={2} step={0.05} value={doc.text.lineHeight} onChange={(e) => setText({ lineHeight: +e.target.value })} />
-            </label>
-            <div className="row">
-              <select value={doc.text.align} onChange={(e) => setText({ align: e.target.value as MessageDoc["text"]["align"] })}>
-                <option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option>
-              </select>
-              <select value={doc.text.valign} onChange={(e) => setText({ valign: e.target.value as MessageDoc["text"]["valign"] })}>
-                <option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option>
-              </select>
-            </div>
-            <label className="check"><input type="checkbox" checked={doc.text.whiteBehind} onChange={(e) => setText({ whiteBehind: e.target.checked })} /> White box behind the text (for photos)</label>
-            <label>Signature (bottom right)
-              <input value={doc.signature} maxLength={40} onChange={(e) => setDoc({ ...doc, signature: e.target.value })} placeholder="- M" />
-            </label>
-          </div>
-        )}
-
+        {tab === "text" && <TextTab doc={doc} setDoc={setDoc} fontPx={base.fontPx} onNote={setNote} />}
         {tab === "photo" && (
-          <div className="stack">
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              try {
-                const { img, b64 } = await normalisePhoto(file);
-                setPhoto(img);
-                setPhotoB64(b64);
-                if (!doc.photo) setDoc((d) => ({ ...d, photo: DEFAULT_PHOTO, template: d.template === "corner-hearts" ? "none" : d.template }));
-              } catch (x) { setNote((x as Error).message); }
-            }} />
-            {photo && doc.photo && (
-              <>
-                <div className="row">
-                  <select value={doc.photo.algo} onChange={(e) => setPhotoLayer({ algo: e.target.value as PhotoLayer["algo"] })}>
-                    <option value="atkinson">Atkinson (best for faces)</option>
-                    <option value="floyd">Floyd–Steinberg (smooth)</option>
-                    <option value="bayer">Ordered (pattern)</option>
-                    <option value="threshold">Threshold (line art)</option>
-                  </select>
-                  <select value={doc.photo.fit} onChange={(e) => setPhotoLayer({ fit: e.target.value as PhotoLayer["fit"] })}>
-                    <option value="cover">Fill</option><option value="contain">Fit</option>
-                  </select>
-                </div>
-                {([
-                  ["brightness", -100, 100, 1], ["contrast", -100, 100, 1], ["gamma", 0.4, 2.5, 0.05],
-                  ["zoom", 1, 4, 0.05], ["offsetX", -1, 1, 0.02], ["offsetY", -1, 1, 0.02],
-                ] as const).map(([k, min, max, step]) => (
-                  <label key={k}>{k} {Number(doc.photo![k]).toFixed(step < 1 ? 2 : 0)}
-                    <input type="range" min={min} max={max} step={step} value={doc.photo![k]} onChange={(e) => setPhotoLayer({ [k]: +e.target.value })} />
-                  </label>
-                ))}
-                {doc.photo.algo === "threshold" && (
-                  <label>threshold {doc.photo.threshold}
-                    <input type="range" min={0} max={255} value={doc.photo.threshold} onChange={(e) => setPhotoLayer({ threshold: +e.target.value })} />
-                  </label>
-                )}
-                <label className="check"><input type="checkbox" checked={doc.photo.sharpen} onChange={(e) => setPhotoLayer({ sharpen: e.target.checked })} /> Sharpen</label>
-                <label className="check"><input type="checkbox" checked={doc.photo.invert} onChange={(e) => setPhotoLayer({ invert: e.target.checked })} /> Invert</label>
-                <button onClick={() => { setPhoto(null); setPhotoB64(null); setDoc({ ...doc, photo: null }); }}>Remove photo</button>
-              </>
-            )}
-            <p className="muted">Photos are shrunk and re-encoded in your browser (location data stripped) before upload. The server never decodes them.</p>
-          </div>
+          <PhotoTab doc={doc} hasPhoto={!!photo} setPhotoLayer={setPhotoLayer} onPick={(f) => void pickPhoto(f)}
+            onRemove={() => { setPhoto(null); setPhotoB64(null); setDoc((d) => ({ ...d, photo: null })); }} />
         )}
-
         {tab === "draw" && (
           <div className="stack">
-            <div className="row">
-              {(["pen", "white", "erase", "heart"] as Brush[]).map((b) => (
-                <button key={b} className={brush === b ? "tab active" : "tab"} onClick={() => setBrush(b)}>
-                  {b === "pen" ? "Black pen" : b === "white" ? "White pen" : b === "erase" ? "Eraser" : "♥ stamp"}
-                </button>
-              ))}
-            </div>
-            <label>Size {brushSize}
-              <input type="range" min={1} max={16} value={brushSize} onChange={(e) => setBrushSize(+e.target.value)} />
-            </label>
-            <div className="row">
-              <button onClick={() => { const u = undo.current.pop(); if (u) { black.current = u.b; white.current = u.w; setDrawTick((t) => t + 1); } }}>Undo</button>
-              <button onClick={() => { undo.current.push({ b: black.current.slice(), w: white.current.slice() }); black.current.fill(0); white.current.fill(0); setDrawTick((t) => t + 1); }}>Clear drawing</button>
-            </div>
+            {toolsPanel}
             <p className="muted">Draw directly on the preview.</p>
           </div>
         )}
-
-        {tab === "style" && (
-          <div className="stack">
-            <label>Border
-              <select value={doc.template} onChange={(e) => setDoc({ ...doc, template: e.target.value })}>
-                {TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-              </select>
-            </label>
-            <label className="check"><input type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)} /> Show where the battery indicator goes</label>
-          </div>
+        {tab === "border" && (
+          <BorderTab doc={doc} setTemplate={(t) => setDoc((d) => ({ ...d, template: t }))}
+            showOverlay={showOverlay} setShowOverlay={setShowOverlay}
+            draft={draft} setDraft={(d) => { setDraft(d); repaint(); }} onStartDraw={startBorder} onUploadPng={(f) => void borderFromImage(f)}
+            onSave={() => void saveBorder()} busy={busy} tools={editingBorder ? toolsPanel : null} />
         )}
       </section>
 
       <section className="preview card">
-        <canvas
-          ref={canvasRef}
-          width={WIDTH}
-          height={HEIGHT}
-          className={tab === "draw" ? "epaper drawing" : "epaper"}
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={onUp}
-        />
+        <div className="bezel" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+          <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} className={canvasClass} data-testid="epaper" />
+        </div>
         <div className="actions">
           <button disabled={busy} onClick={run("Saved as draft", async () => {})}>Save draft</button>
           <button disabled={busy} onClick={run("Added to the queue", (sid) => api.queue(sid), true)}>Add to queue</button>
