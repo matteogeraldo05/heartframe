@@ -77,7 +77,9 @@ function textInk(t: TextLayer, laid: Laid, x0: (w: number) => number, y0: number
     ctx.font = cssFont(f, laid.px, t.bold, t.italic);
     ctx.textBaseline = "middle";
     ctx.lineJoin = "round";
-    ctx.lineWidth = t.stroke + fauxBold + grow * 2;
+    // Decide on the number, not ctx.lineWidth: canvas ignores lineWidth = 0 and keeps 1.
+    const lw = t.stroke + fauxBold + grow * 2;
+    if (lw > 0) ctx.lineWidth = lw;
     // Decorations sit relative to the alphabetic baseline: measure where it is from "middle".
     const x = ctx.measureText("x");
     const toBaseline = x.actualBoundingBoxDescent;
@@ -90,7 +92,7 @@ function textInk(t: TextLayer, laid: Laid, x0: (w: number) => number, y0: number
       if (fauxItalic) ctx.setTransform(1, 0, -0.2, 1, 0.2 * y, 0); // lean right around this line's middle
       if (l.text) {
         ctx.fillText(l.text, lx, y);
-        if (ctx.lineWidth > 0) ctx.strokeText(l.text, lx, y);
+        if (lw > 0) ctx.strokeText(l.text, lx, y);
       }
       if (l.bullet) {
         ctx.beginPath();
