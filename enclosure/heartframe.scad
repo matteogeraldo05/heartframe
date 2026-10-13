@@ -43,7 +43,7 @@ aa_y = 10.4;         // active area bottom edge - panel bottom edge (MEASURE; th
 module_back = 6.0;   // tallest part on the back of the module (connector), from PCB back
 fpc_edge = "bottom"; // edge where the flex cable wraps round: bottom | top | left | right
 fpc_len = 40;        // length of that flex bulge along the edge
-presser_xy = [[5, 6], [87, 6], [6, 72.5], [97, 76]]; // pads pressing the module PCB (from PCB lower-left), placed to miss
+presser_xy = [[5, 6], [87, 6], [6, 72.5], [97, 76.5]]; // pads pressing the module PCB (from PCB lower-left), placed to miss
                      // the battery, the perfboard and the corner blocks. Keep them off parts on the module's back!
 presser_d = 5;
 // If the module has standoffs on its back, the back cover presses on THEM instead of the PCB
