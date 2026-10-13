@@ -199,8 +199,21 @@ docker exec heartframe node -e "fetch('https://api.github.com').then(r=>console.
 - **Clearer publish errors:** the log includes the underlying network cause,
   e.g. `fetch failed (ENOTFOUND)`.
 
-The Settings page still shows the heart LED options (colour, brightness,
-duration). They no longer do anything on this hardware.
+**Round 2 (Oct 2026, merged from `webapp-round-2`):**
+
+- Heart logo and an Outfit wordmark; new messages start blank.
+- **Text:** more fonts plus uploaded fonts, bold / italic / underline /
+  strikethrough, bullets, text backgrounds (solid box, box per line, white
+  outline), invert. Drawing now lands exactly under the pointer.
+- **Photos:** Bayer 2 × 2 / 4 × 4 / 8 × 8 and Stucki dithering; drag the photo
+  to position it.
+- **Draw:** exact 1–64 px square or round brushes, dither pen, uploaded stamps,
+  selection with move and resize, redo.
+- **Border** tab (was Style): fixed little-hearts and scalloped borders, custom
+  saved borders.
+- **Library:** sort and favourites. **Settings:** custom uploads, LED options
+  removed.
+- Existing messages render exactly as before.
 
 ---
 
