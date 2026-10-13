@@ -21,3 +21,7 @@ enclosure/*.blend
 enclosure/*.blend1
 *.log
 .DS_Store
+
+# --- Playwright output ---
+webapp/test-results/
+webapp/playwright-report/

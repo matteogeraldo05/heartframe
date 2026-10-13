@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { api } from "../api";
+import { Logo } from "./Logo";
 
 export function Login({ onDone }: { onDone: () => void }) {
   const [pw, setPw] = useState("");
@@ -15,7 +16,7 @@ export function Login({ onDone }: { onDone: () => void }) {
         api.login(pw).then(onDone).catch((x: Error) => setErr(x.message)).finally(() => setBusy(false));
       }}
     >
-      <h1><span className="heart">♥</span> Heart Frame</h1>
+      <Logo />
       <input type="password" autoFocus placeholder="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" />
       <button className="primary" disabled={busy || !pw}>Log in</button>
       {err && <p className="error">{err}</p>}

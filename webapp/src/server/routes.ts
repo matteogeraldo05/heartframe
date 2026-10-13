@@ -17,6 +17,7 @@ import type { GitHub } from "./github.js";
 import { reflowQueue, type FirmwareInfo } from "./manifest.js";
 import { bitmapToPng } from "./png.js";
 import type { Publisher } from "./publisher.js";
+import { registerUploads } from "./uploads.js";
 
 const b64 = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/);
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -31,24 +32,34 @@ const DocSchema = z.object({
     valign: z.enum(["top", "middle", "bottom"]),
     lineHeight: z.number().min(0.7).max(2.5),
     stroke: z.number().min(0).max(4),
-    whiteBehind: z.boolean(),
+    whiteBehind: z.boolean().optional(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    strike: z.boolean().optional(),
+    bullets: z.boolean().optional(),
+    background: z.enum(["none", "box", "lines", "outline"]).optional(),
+    outline: z.number().min(0).max(12).optional(),
   }),
   template: z.string().max(40),
   photo: z.object({
     fit: z.enum(["cover", "contain"]),
     zoom: z.number().min(0.2).max(5),
-    offsetX: z.number().min(-1).max(1),
-    offsetY: z.number().min(-1).max(1),
+    offsetX: z.number().min(-1).max(1).optional(),
+    offsetY: z.number().min(-1).max(1).optional(),
+    panX: z.number().min(-4000).max(4000).optional(),
+    panY: z.number().min(-4000).max(4000).optional(),
     brightness: z.number().min(-100).max(100),
     contrast: z.number().min(-100).max(100),
     gamma: z.number().min(0.3).max(3),
-    algo: z.enum(["atkinson", "floyd", "bayer", "threshold"]),
+    algo: z.enum(["atkinson", "floyd", "stucki", "bayer2", "bayer4", "bayer8", "threshold", "bayer"]),
     threshold: z.number().min(0).max(255),
     sharpen: z.boolean(),
     invert: z.boolean(),
   }).nullable(),
   drawing: z.object({ black: b64.max(20100), white: b64.max(20100) }).nullable(),
   signature: z.string().max(60),
+  invert: z.boolean().optional(),
 });
 
 const SaveSchema = z.object({
@@ -64,9 +75,9 @@ const SettingsSchema = z.object({
   checkUsbMin: z.number().int().min(5).max(720),
   quietStart: hhmm,
   quietEnd: hhmm,
-  ledColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  ledMax: z.number().int().min(0).max(200),
-  ledMs: z.number().int().min(1000).max(30000),
+  ledColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  ledMax: z.number().int().min(0).max(200).optional(),
+  ledMs: z.number().int().min(1000).max(30000).optional(),
   heartbeatUrl: z.union([z.literal(""), z.string().url().startsWith("https://").max(110)]),
   heartbeatHours: z.number().int().min(1).max(48),
   queueTime: hhmm,
@@ -111,6 +122,7 @@ export function registerRoutes(app: FastifyInstance, db: DB, cfg: Config, gh: Gi
   const isLive = (r: MessageRow) => r.status !== "draft";
 
   app.get("/api/me", auth, async () => ({ ok: true }));
+  registerUploads(app, db, cfg, auth);
 
   app.get("/api/messages", auth, async () => db.list().map((r) => db.summary(r)));
 
@@ -140,7 +152,7 @@ export function registerRoutes(app: FastifyInstance, db: DB, cfg: Config, gh: Gi
     const now = db.now();
     const row: MessageRow = {
       id: db.newId(), title: body.title, doc: JSON.stringify(body.doc), bitmap: decodeBitmap(body.bitmap),
-      photo: decodePhoto(body.photo) ?? null, status: "draft", show_at: null, queue_pos: null, surprise: 0,
+      photo: decodePhoto(body.photo) ?? null, status: "draft", show_at: null, queue_pos: null, surprise: 0, favourite: 0,
       created_at: now, updated_at: now,
     };
     db.insert(row);
@@ -162,9 +174,16 @@ export function registerRoutes(app: FastifyInstance, db: DB, cfg: Config, gh: Gi
   app.post<{ Params: { id: string } }>("/api/messages/:id/duplicate", auth, async (req) => {
     const r = find(req.params.id);
     const now = db.now();
-    const copy: MessageRow = { ...r, id: db.newId(), title: `${r.title} (copy)`, status: "draft", show_at: null, queue_pos: null, surprise: 0, created_at: now, updated_at: now };
+    const copy: MessageRow = { ...r, id: db.newId(), title: `${r.title} (copy)`, status: "draft", show_at: null, queue_pos: null, surprise: 0, favourite: 0, created_at: now, updated_at: now };
     db.insert(copy);
     return db.summary(copy);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/messages/:id/favourite", auth, async (req) => {
+    const r = find(req.params.id);
+    const { favourite } = z.object({ favourite: z.boolean() }).parse(req.body);
+    db.setFavourite(r.id, favourite);
+    return db.summary(find(r.id));
   });
 
   app.post<{ Params: { id: string } }>("/api/messages/:id/queue", auth, async (req) => {
@@ -231,7 +250,8 @@ export function registerRoutes(app: FastifyInstance, db: DB, cfg: Config, gh: Gi
   app.get("/api/settings", auth, async () => db.settings());
   app.put("/api/settings", auth, async (req) => {
     const s = SettingsSchema.parse(req.body);
-    db.putSetting("device", s);
+    // The UI no longer sends the LED fields; merge so the stored values stay in the manifest.
+    db.putSetting("device", { ...db.getSetting<object>("device", {}), ...s });
     reflowQueue(db);
     pub.schedule();
     return db.settings();

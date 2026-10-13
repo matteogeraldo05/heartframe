@@ -1,7 +1,7 @@
 // End-to-end: API -> publisher -> (fake) GitHub, then decrypt what landed in the repo
 // exactly like the frame would.
 import { createHash, scryptSync } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { KIND_BITMAP, KIND_MANIFEST, PIXEL_BYTES, bytesToBase64 } from "../src/shared/format";
 import type { Config } from "../src/server/config";
 import { openEnvelope, sha256Hex } from "../src/server/crypto";
+import Database from "better-sqlite3";
+
 import { openDb } from "../src/server/db";
 import { GitHub } from "../src/server/github";
 import { buildApp } from "../src/server/index";
@@ -90,7 +92,7 @@ function setup() {
   const db = openDb(":memory:");
   const gh = new GitHub("me", "msgs", "main", "github_pat_server", remote.fetch as typeof fetch);
   const { app, publisher } = buildApp(cfg, db, gh);
-  return { app, db, remote, publisher };
+  return { app, db, remote, publisher, cfg };
 }
 
 const doc = {
@@ -194,5 +196,111 @@ describe("server", () => {
     const manifest = JSON.parse(openEnvelope(KEY, t.remote.files().get("manifest.hfe")!, KIND_MANIFEST).toString());
     expect(manifest.cfg.led).toEqual([255, 0, 80]);
     expect(manifest.cfg.qs).toBe(22 * 60 + 30);
+  });
+
+  // ---- added with uploads / favourites / LED removal -------------------------------
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 1)]);
+  const WOFF2 = Buffer.concat([Buffer.from("wOF2"), Buffer.alloc(40, 2)]);
+  const up = (payload: object, headers = H()) => t.app.inject({ method: "POST", url: "/api/uploads", headers, payload });
+
+  it("uploads: validates type by content and size, stores under a generated name", async () => {
+    const font = await up({ kind: "font", name: "My Hand", data: WOFF2.toString("base64") });
+    expect(font.statusCode).toBe(200);
+    const info = font.json();
+    expect(info).toMatchObject({ kind: "font", name: "My Hand", mime: "font/woff2" });
+    const files = readdirSync(path.join(t.cfg.dataDir, "uploads", "font"));
+    expect(files).toEqual([`${info.id}.woff2`]);            // never the uploaded name
+
+    // Wrong type for the kind, disguised file, too big, HTML pretending to be a PNG.
+    expect((await up({ kind: "font", name: "x", data: PNG.toString("base64") })).statusCode).toBe(400);
+    expect((await up({ kind: "stamp", name: "x", data: WOFF2.toString("base64") })).statusCode).toBe(400);
+    expect((await up({ kind: "stamp", name: "x", data: Buffer.from("<html><script>alert(1)</script>").toString("base64") })).statusCode).toBe(400);
+    const big = Buffer.concat([PNG, Buffer.alloc(2 * 1024 * 1024)]);
+    expect((await up({ kind: "border", name: "x", data: big.toString("base64") })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await up({ kind: "../etc", name: "x", data: PNG.toString("base64") })).statusCode).toBe(400);
+
+    // Served back as-is, sandboxed.
+    const file = await t.app.inject({ method: "GET", url: `/api/uploads/${info.id}/file`, headers: { cookie } });
+    expect(file.statusCode).toBe(200);
+    expect(file.headers["content-type"]).toBe("font/woff2");
+    expect(String(file.headers["content-security-policy"])).toContain("sandbox");
+    expect(file.headers["x-content-type-options"]).toBe("nosniff");
+    expect(Buffer.from(file.rawPayload).equals(WOFF2)).toBe(true);
+  });
+
+  it("uploads: need a session and the CSRF header", async () => {
+    const data = PNG.toString("base64");
+    expect((await t.app.inject({ method: "GET", url: "/api/uploads" })).statusCode).toBe(401);
+    expect((await up({ kind: "stamp", name: "x", data }, { "content-type": "application/json", "x-hf-csrf": "1" } as never)).statusCode).toBe(401);
+    expect((await up({ kind: "stamp", name: "x", data }, { cookie, "content-type": "application/json" } as never)).statusCode).toBe(403);
+    const ok = (await up({ kind: "stamp", name: "x", data })).json();
+    expect((await t.app.inject({ method: "DELETE", url: `/api/uploads/${ok.id}`, headers: { cookie } })).statusCode).toBe(403);
+    expect((await t.app.inject({ method: "GET", url: `/api/uploads/${ok.id}/file` })).statusCode).toBe(401);
+  });
+
+  it("uploads: list says which messages use a border/font; delete removes the file", async () => {
+    const border = (await up({ kind: "border", name: "Stars", data: PNG.toString("base64"), inset: 40 })).json();
+    expect(border.inset).toBe(40);
+    const usesIt = { ...doc, template: `upload:${border.id}` };
+    const m = (await t.app.inject({ method: "POST", url: "/api/messages", headers: H(), payload: { title: "starry", doc: usesIt, bitmap: bytesToBase64(pixels) } })).json();
+    const list = (await t.app.inject({ method: "GET", url: "/api/uploads", headers: { cookie } })).json();
+    expect(list[0].usedBy).toEqual([{ id: m.id, title: "starry" }]);
+    const del = await t.app.inject({ method: "DELETE", url: `/api/uploads/${border.id}`, headers: H(), payload: {} });
+    expect(del.statusCode).toBe(200);
+    expect(existsSync(path.join(t.cfg.dataDir, "uploads", "border", `${border.id}.png`))).toBe(false);
+    // The message keeps its saved bitmap (and still opens).
+    const got = await t.app.inject({ method: "GET", url: `/api/messages/${m.id}`, headers: { cookie } });
+    expect(got.statusCode).toBe(200);
+    expect((await t.app.inject({ method: "GET", url: `/api/messages/${m.id}/preview.png`, headers: { cookie } })).statusCode).toBe(200);
+  });
+
+  it("favourites: toggles without counting as an edit", async () => {
+    const m = (await t.app.inject({ method: "POST", url: "/api/messages", headers: H(), payload: { title: "fav", doc, bitmap: bytesToBase64(pixels) } })).json();
+    expect(m.favourite).toBe(false);
+    t.db.raw.prepare("UPDATE messages SET updated_at = 5 WHERE id = ?").run(m.id);
+    const fav = await t.app.inject({ method: "POST", url: `/api/messages/${m.id}/favourite`, headers: H(), payload: { favourite: true } });
+    expect(fav.json()).toMatchObject({ favourite: true, updatedAt: 5 });
+    const dup = (await t.app.inject({ method: "POST", url: `/api/messages/${m.id}/duplicate`, headers: H(), payload: {} })).json();
+    expect(dup.favourite).toBe(false);
+  });
+
+  it("accepts docs saved before this version and docs using the new fields", async () => {
+    const legacy = { ...doc, text: { ...doc.text, whiteBehind: true },
+      photo: { fit: "cover", zoom: 1, offsetX: 0.2, offsetY: -0.4, brightness: 0, contrast: 10, gamma: 1, algo: "bayer", threshold: 128, sharpen: true, invert: false } };
+    const a = await t.app.inject({ method: "POST", url: "/api/messages", headers: H(), payload: { title: "old", doc: legacy, bitmap: bytesToBase64(pixels) } });
+    expect(a.statusCode).toBe(200);
+    const back = (await t.app.inject({ method: "GET", url: `/api/messages/${a.json().id}`, headers: { cookie } })).json();
+    expect(back.doc).toEqual(legacy);
+    const modern = { ...doc, invert: true,
+      text: { content: "hi", font: "upload:0123456789abcdef", size: 0, align: "left", valign: "top", lineHeight: 1.2, stroke: 0, bold: true, italic: true, underline: true, strike: false, bullets: true, background: "outline", outline: 3 },
+      photo: { fit: "cover", zoom: 1.5, panX: -40, panY: 12, brightness: 0, contrast: 10, gamma: 1, algo: "stucki", threshold: 128, sharpen: true, invert: false } };
+    expect((await t.app.inject({ method: "POST", url: "/api/messages", headers: H(), payload: { title: "new", doc: modern, bitmap: bytesToBase64(pixels) } })).statusCode).toBe(200);
+  });
+
+  it("settings save without the LED fields and the stored LED values stay in the manifest", async () => {
+    const { ledColor: _c, ledMax: _m, ledMs: _s, ...rest } = (await t.app.inject({ method: "GET", url: "/api/settings", headers: { cookie } })).json();
+    const ok = await t.app.inject({ method: "PUT", url: "/api/settings", headers: H(), payload: { ...rest, checkMin: 90 } });
+    expect(ok.statusCode).toBe(200);
+    await t.publisher.run(true);
+    const manifest = JSON.parse(openEnvelope(KEY, t.remote.files().get("manifest.hfe")!, KIND_MANIFEST).toString());
+    expect(manifest.cfg).toMatchObject({ chk: 90, led: [255, 8, 72], ledMax: 160, ledMs: 10000 });
+  });
+});
+
+describe("database migration", () => {
+  it("adds the favourite column to a database from the previous version, keeping its messages", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hf-old-"));
+    const old = new Database(path.join(dir, "heartframe.sqlite"));
+    old.exec(`CREATE TABLE messages (id TEXT PRIMARY KEY, title TEXT NOT NULL, doc TEXT NOT NULL, bitmap BLOB NOT NULL, photo BLOB,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','queued','scheduled')), show_at INTEGER, queue_pos REAL,
+      surprise INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
+    old.prepare("INSERT INTO messages (id,title,doc,bitmap,created_at,updated_at) VALUES ('abc','kept',?,?,1,2)").run(JSON.stringify(doc), Buffer.from(pixels));
+    old.close();
+    const db = openDb(dir);
+    const r = db.get("abc")!;
+    expect(db.summary(r)).toMatchObject({ id: "abc", title: "kept", favourite: false, updatedAt: 2 });
+    expect(Buffer.from(r.bitmap).equals(Buffer.from(pixels))).toBe(true);
+    db.raw.close();
+    openDb(dir).raw.close(); // second start: migration is a no-op
   });
 });

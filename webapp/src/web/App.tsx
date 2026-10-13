@@ -4,9 +4,11 @@ import { api } from "./api";
 import { Editor } from "./components/Editor";
 import { Library } from "./components/Library";
 import { Login } from "./components/Login";
+import { Logo } from "./components/Logo";
 import { Queue } from "./components/Queue";
 import { Settings } from "./components/Settings";
 import { loadFonts } from "./render/fonts";
+import { loadUploads } from "./render/uploads";
 import { ThemeToggle } from "./theme";
 
 type View = "compose" | "queue" | "library" | "settings";
@@ -17,6 +19,7 @@ export function App() {
   const [view, setView] = useState<View>("compose");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [uploadsReady, setUploadsReady] = useState(false);
 
   useEffect(() => {
     api.me().then(() => setAuthed(true)).catch(() => setAuthed(false));
@@ -26,7 +29,13 @@ export function App() {
     return () => window.removeEventListener("hf-logout", onLogout);
   }, []);
 
-  if (authed === null || !fontsReady) return <div className="center muted">loading…</div>;
+  // Your uploaded fonts/borders must be loaded before a message that uses them is opened.
+  useEffect(() => {
+    if (!authed) { setUploadsReady(false); return; }
+    loadUploads().catch(() => {}).finally(() => setUploadsReady(true));
+  }, [authed]);
+
+  if (authed === null || !fontsReady || (authed && !uploadsReady)) return <div className="center muted">loading…</div>;
   if (!authed) return (<><ThemeToggle floating /><Login onDone={() => setAuthed(true)} /></>);
 
   const edit = (id: string | null) => { setEditingId(id); setView("compose"); };
@@ -35,7 +44,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1><span className="heart">♥</span> Heart Frame</h1>
+        <Logo />
         <nav>
           {(["compose", "queue", "library", "settings"] as View[]).map((v) => (
             <button key={v} className={view === v ? "tab active" : "tab"} onClick={() => (v === "compose" ? edit(null) : setView(v))}>
