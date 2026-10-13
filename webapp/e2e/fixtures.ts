@@ -1,8 +1,18 @@
 // A fake /api so the UI runs in the browser without the real server (uploads are kept in memory).
+import { readFileSync } from "node:fs";
+
 import type { Page } from "@playwright/test";
 
-export async function fakeApi(page: Page) {
-  const messages: Record<string, unknown>[] = [];
+export const sampleMessages = () => [
+  { id: "m1", title: "Banana bread", status: "draft", updatedAt: 100, favourite: false },
+  { id: "m2", title: "Apple pie", status: "queued", updatedAt: 300, favourite: false },
+  { id: "m3", title: "Cherry on top", status: "shown", updatedAt: 200, favourite: true },
+].map((m) => ({ createdAt: 1, showAt: null, surprise: false, queuePos: null, hasPhoto: false, ...m }));
+
+const THUMB = readFileSync(new URL("../src/web/public/favicon-192.png", import.meta.url));
+
+export async function fakeApi(page: Page, opts: { messages?: Record<string, unknown>[] } = {}) {
+  const messages: Record<string, unknown>[] = opts.messages ?? [];
   const uploads: { info: Record<string, unknown>; data: Buffer }[] = [];
   let n = 0;
   await page.route("**/api/**", async (route) => {
@@ -26,6 +36,13 @@ export async function fakeApi(page: Page) {
       return u ? route.fulfill({ status: 200, contentType: String(u.info.mime), body: u.data }) : json({ error: "not found" }, 404);
     }
     if (p === "/api/messages" && m === "GET") return json(messages);
+    const fav = /^\/api\/messages\/(\w+)\/favourite$/.exec(p);
+    if (fav) {
+      const msg = messages.find((x) => x.id === fav[1])!;
+      msg.favourite = req.postDataJSON().favourite;
+      return json(msg);
+    }
+    if (/^\/api\/messages\/\w+\/preview\.png$/.test(p)) return route.fulfill({ status: 200, contentType: "image/png", body: THUMB });
     if (p === "/api/settings") return json({ tzName: "America/Toronto", checkMin: 60, checkUsbMin: 15, quietStart: "23:00", quietEnd: "07:00", heartbeatUrl: "", heartbeatHours: 6, queueTime: "07:30", queueEveryDays: 1 });
     if (p === "/api/status") return json({ lastPublish: null, log: [], serverTokenExpiry: null, deviceTokenGen: 1, deviceTokenExpiry: null, firmware: null, repo: "me/msgs", pending: false });
     return json({ error: `not stubbed: ${m} ${p}` }, 404);

@@ -155,3 +155,10 @@ code { background: var(--pink-soft); padding: 1px 5px; border-radius: 4px; }
   .editor { grid-template-columns: 1fr; }
   .preview { order: -1; }
 }
+
+.library-bar { justify-content: flex-end; }
+label.inline { flex-direction: row; align-items: center; gap: 8px; flex: none; min-width: 0; }
+label.inline select { width: auto; }
+.tile-top { position: relative; }
+button.star { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 1.25rem; line-height: 1; color: var(--muted); background: var(--field); }
+button.star.on { color: #f5a300; border-color: #f5c84b; }
