@@ -16,5 +16,8 @@ webapp/node_modules/
 webapp/dist/
 webapp/data/
 enclosure/stl/
+enclosure/bl/
+enclosure/*.blend
+enclosure/*.blend1
 *.log
 .DS_Store

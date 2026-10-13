@@ -10,19 +10,17 @@ mkdir -p stl
 EXTRA=("$@")
 scad() { openscad "${EXTRA[@]}" "$@" heartframe.scad; }
 
-for p in front back test_display test_boss; do
+for p in front back test_usb test_display test_boss test_button stand; do
   echo "rendering $p..."
   scad -D "part=\"$p\"" -o "stl/$p.stl"
-done
-for t in 0.8 1.2 1.6 2.2; do               # diffuser face thickness candidates (pick one after the glow test)
-  echo "rendering diffuser $t mm..."
-  scad -D 'part="diffuser"' -D "diffuser_face=$t" -o "stl/diffuser_$t.stl"
 done
 scad -D 'part="template"' -o stl/front_template.svg
 scad -D 'part="template"' -o stl/front_template.dxf     # for Onshape (Insert DXF)
 scad -D 'part="assembly"' --imgsize=1600,1200 --viewall --autocenter \
   --camera=0,0,0,235,0,205,0 --colorscheme=Tomorrow -o stl/assembly.png \
   || { rm -f stl/assembly.png; echo "(PNG preview needs a display; skipped)"; }
+scad -D 'part="inside"' --imgsize=1300,1300 --viewall --autocenter --camera=0,0,0,0,0,0,0 --projection=ortho \
+  --colorscheme=Tomorrow -o stl/inside.png || rm -f stl/inside.png
 if python3 -c 'import matplotlib' 2>/dev/null; then
   python3 insert_drawing.py "${EXTRA[@]}"
 else
