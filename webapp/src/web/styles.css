@@ -170,3 +170,5 @@ label.inline select { width: auto; }
 .tile-top { position: relative; }
 button.star { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; padding: 0; border-radius: 50%; font-size: 1.25rem; line-height: 1; color: var(--muted); background: var(--field); }
 button.star.on { color: #f5a300; border-color: #f5c84b; }
+.history-bar { display: flex; gap: 8px; justify-content: center; }
+button.shape-btn { min-width: 46px; font-size: 1.15rem; line-height: 1.1; }

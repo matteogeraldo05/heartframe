@@ -23,11 +23,13 @@ export interface TextLayer {
   bullets?: boolean;
   background?: TextBackground;
   outline?: number;      // white outline width in px (background "outline")
+  dx?: number;           // text block moved by dragging, in canvas px (0 / missing = where layout puts it)
+  dy?: number;
 }
 
 export interface PhotoLayer {
   fit: "cover" | "contain";
-  zoom: number;          // 1 = fit
+  zoom: number;          // scale factor, 1 = fit (the slider shows -5..5, see editor/history.ts)
   offsetX?: number;      // legacy -1..1 pan, used only while panX/panY are unset
   offsetY?: number;
   panX?: number;         // photo centre offset from the canvas centre, in canvas px (drag to move)
