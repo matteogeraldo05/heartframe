@@ -138,7 +138,10 @@ export function renderMessage(
     let y0 = box.y;
     if (t.valign === "middle") y0 = box.y + (box.h - blockH) / 2;
     if (t.valign === "bottom") y0 = box.y + box.h - blockH;
-    const xFor = (w: number) => (t.align === "left" ? box.x : t.align === "right" ? box.x + box.w - w : box.x + (box.w - w) / 2);
+    // Dragged text: the whole block (and its background) moves; older messages have no dx/dy.
+    const dx = t.dx ?? 0;
+    y0 += t.dy ?? 0;
+    const xFor = (w: number) => dx + (t.align === "left" ? box.x : t.align === "right" ? box.x + box.w - w : box.x + (box.w - w) / 2);
     const clear = (x: number, y: number, w: number, h: number) => {
       const bx = Math.max(0, Math.floor(x)), by = Math.max(0, Math.floor(y));
       const bw = Math.min(WIDTH - bx, Math.ceil(w)), bh = Math.min(HEIGHT - by, Math.ceil(h));

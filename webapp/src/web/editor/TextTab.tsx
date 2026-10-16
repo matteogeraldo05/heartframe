@@ -99,6 +99,12 @@ export function TextTab({ doc, setDoc, fontPx, onNote }: {
           </select>
         </label>
       </div>
+      {t.content.trim() && (
+        <div className="row">
+          <p className="hint grow">Drag the text on the preview to move it.</p>
+          {(t.dx || t.dy) ? <button type="button" onClick={() => setText({ dx: undefined, dy: undefined })}>Reset position</button> : null}
+        </div>
+      )}
       <fieldset className="choices">
         <legend>Text background</legend>
         <div className="seg">

@@ -22,7 +22,11 @@ export async function normalisePhoto(file: File): Promise<{ img: HTMLImageElemen
     const c = document.createElement("canvas");
     c.width = Math.round(src.naturalWidth * scale);
     c.height = Math.round(src.naturalHeight * scale);
-    c.getContext("2d")!.drawImage(src, 0, 0, c.width, c.height);
+    const ctx = c.getContext("2d")!;
+    // JPEG has no transparency: without this, transparent areas of a PNG/GIF/WebP come out black.
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(src, 0, 0, c.width, c.height);
     const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("encode failed"))), "image/jpeg", 0.88));
     const b64 = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
     const img = await loadImage(URL.createObjectURL(blob));

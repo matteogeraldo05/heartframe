@@ -2,7 +2,8 @@
 import { describe, expect, it } from "vitest";
 
 import { HEIGHT, OVERLAY, WIDTH } from "../src/shared/format";
-import { brushOffsets, ditherOn, Layer, scaleNearest } from "../src/web/render/layer";
+import { History, levelToZoom, zoomToLevel } from "../src/web/editor/history";
+import { brushOffsets, ditherOn, floodRegion, Layer, scaleNearest, shapeMask } from "../src/web/render/layer";
 import { bulletIndent, layoutText, wrapLines } from "../src/web/render/layout";
 import { heartBorder, scallopArcs, spaced } from "../src/web/render/shapes";
 
@@ -69,7 +70,7 @@ describe("selection", () => {
     expect(Array.from(scaleNearest(new Uint8Array([1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1]), 4, 4, 2, 2))).toEqual([1, 0, 0, 1]);
   });
 
-  it("lift, move, resize and commit; undo puts it back; redo re-applies", () => {
+  it("lift, move, resize and commit", () => {
     const L = new Layer();
     L.dab(10, 10, brushOffsets(2, "square"), "black"); // 2x2 at (10..11, 10..11)
     L.lift({ x: 10, y: 10, w: 2, h: 2 });
@@ -81,11 +82,36 @@ describe("selection", () => {
     expect(L.black[60 * WIDTH + 50]).toBe(1);
     expect(L.black[65 * WIDTH + 53]).toBe(1);
     expect(L.black[10 * WIDTH + 10]).toBe(0);
-    L.undo();
-    expect(count(L.black)).toBe(4);
-    expect(L.black[10 * WIDTH + 10]).toBe(1);
-    L.redo();
-    expect(count(L.black)).toBe(24);
+  });
+
+  it("rotation 0 places pixels exactly like plain nearest-neighbour scaling", () => {
+    const L = new Layer();
+    for (const [x, y] of [[100, 100], [101, 100], [103, 102], [100, 104]]) L.set(x, y, "black");
+    L.lift({ x: 100, y: 100, w: 4, h: 5 });
+    L.float!.to = { x: 20, y: 30, w: 9, h: 7 };
+    const p = L.floatPixels()!;
+    expect([p.x, p.y, p.w, p.h]).toEqual([20, 30, 9, 7]);
+    expect(Array.from(p.black)).toEqual(Array.from(scaleNearest(L.float!.black, 4, 5, 9, 7)));
+  });
+
+  it("rotates around the centre: 90 degrees clockwise turns a top row into a right column", () => {
+    const L = new Layer();
+    for (let x = 200; x < 210; x++) L.set(x, 100, "black");   // 10 x 1 bar = top row of a 10 x 10 box
+    L.lift({ x: 200, y: 100, w: 10, h: 10 });
+    L.float!.angle = Math.PI / 2;
+    L.commitFloat();
+    expect(count(L.black)).toBe(10);
+    for (let y = 100; y < 110; y++) expect(L.black[y * WIDTH + 209], `y=${y}`).toBe(1); // right-hand column
+  });
+
+  it("rotating by 180 degrees twice gives back the same pixels", () => {
+    const L = new Layer();
+    for (const [x, y] of [[60, 60], [61, 60], [62, 63], [64, 61], [60, 64]]) L.set(x, y, "black");
+    const before = L.black.slice();
+    L.lift({ x: 60, y: 60, w: 5, h: 5 }); L.float!.angle = Math.PI; L.commitFloat();
+    expect(L.black[64 * WIDTH + 64]).toBe(1); // (60, 60) went to the opposite corner
+    L.lift({ x: 60, y: 60, w: 5, h: 5 }); L.float!.angle = Math.PI; L.commitFloat();
+    expect(Array.from(L.black)).toEqual(Array.from(before));
   });
 
   it("Esc puts the selection back where it was; transparent pixels don't overwrite", () => {
@@ -193,5 +219,126 @@ describe("text layout", () => {
     const bullet = layoutText(mono, { content: "hello there", size: 0, lineHeight: 1.2, bullets: true }, 200, 200);
     expect(bullet.px).toBeLessThan(plain.px);
     expect(bullet.width).toBeLessThanOrEqual(200);
+  });
+});
+
+describe("shapes", () => {
+  const bbox = (m: Uint8Array) => {
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    m.forEach((v, i) => { if (v) { const x = i % WIDTH, y = (i / WIDTH) | 0; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } });
+    return [x0, y0, x1, y1];
+  };
+  const at = (m: Uint8Array, x: number, y: number) => m[y * WIDTH + x];
+
+  it("rectangle: filled covers the whole box, outline only its edges (any drag direction)", () => {
+    const f = shapeMask("rect", 30, 40, 10, 20, true, 1); // dragged up-left
+    expect(count(f)).toBe(21 * 21);
+    expect(bbox(f)).toEqual([10, 20, 30, 40]);
+    const o = shapeMask("rect", 10, 20, 49, 29, false, 2);
+    expect(count(o)).toBe(40 * 10 - 36 * 6);
+    expect(at(o, 25, 25)).toBe(0);
+  });
+
+  it("ellipse fills its box (not a locked circle) and the outline is hollow", () => {
+    const e = shapeMask("ellipse", 100, 100, 179, 139, true, 1);    // 80 x 40
+    expect(bbox(e)).toEqual([100, 100, 179, 139]);
+    expect(Math.abs(count(e) - (Math.PI * 80 * 40) / 4) / ((Math.PI * 80 * 40) / 4)).toBeLessThan(0.05);
+    const o = shapeMask("ellipse", 100, 100, 179, 139, false, 3);
+    expect(at(o, 140, 120)).toBe(0);
+    expect(at(o, 100, 120)).toBe(1);
+    expect(at(o, 140, 100)).toBe(1);
+  });
+
+  it("line goes from end to end with the given width", () => {
+    const l = shapeMask("line", 10, 10, 110, 60, false, 1);
+    expect(at(l, 10, 10)).toBe(1);
+    expect(at(l, 110, 60)).toBe(1);
+    expect(bbox(l)).toEqual([10, 10, 110, 60]);
+    expect(count(shapeMask("line", 10, 10, 110, 10, false, 5))).toBeGreaterThan(5 * 100);
+  });
+
+  it("triangle and star point up, and down when dragged upwards", () => {
+    for (const kind of ["triangle", "star"] as const) {
+      const up = shapeMask(kind, 50, 50, 149, 149, true, 1);
+      const down = shapeMask(kind, 50, 149, 149, 50, true, 1);
+      expect(at(up, 100, 56), kind).toBe(1);   // just under the tip at the top-centre
+      expect(at(up, 100, 148), kind).toBe(kind === "triangle" ? 1 : 0); // star: notch between the legs
+      expect(at(down, 100, 143), kind).toBe(1);
+      expect(at(down, 100, 51), kind).toBe(kind === "triangle" ? 1 : 0);
+      expect(bbox(up)[0]).toBeGreaterThanOrEqual(50);
+      expect(bbox(up)[2]).toBeLessThanOrEqual(149);
+    }
+    const outline = shapeMask("star", 50, 50, 149, 149, false, 2);
+    expect(at(outline, 100, 100)).toBe(0); // hollow
+  });
+});
+
+describe("bucket fill", () => {
+  it("fills the connected area of the clicked colour, not across lines, not diagonally", () => {
+    const img = new Uint8Array(WIDTH * HEIGHT);
+    for (let y = 0; y < HEIGHT; y++) img[y * WIDTH + 200] = 1;   // a vertical wall
+    const left = floodRegion(img, 10, 10);
+    expect(count(left)).toBe(200 * HEIGHT);
+    expect(left[10 * WIDTH + 250]).toBe(0);
+    const wall = floodRegion(img, 200, 5);
+    expect(count(wall)).toBe(HEIGHT);
+    const diag = new Uint8Array(WIDTH * HEIGHT);
+    diag[0] = 1; diag[WIDTH + 1] = 1;                           // touching only at a corner
+    expect(count(floodRegion(diag, 0, 0))).toBe(1);
+  });
+
+  it("paints the area in black, white or an adjustable dither", () => {
+    const area = floodRegion(new Uint8Array(WIDTH * HEIGHT), 0, 0);
+    const L = new Layer();
+    L.paintMask(area, "dither", 16);
+    expect(count(L.black)).toBe((WIDTH * HEIGHT) / 4);
+    L.paintMask(area, "dither", 48);
+    expect(count(L.black)).toBe((WIDTH * HEIGHT * 3) / 4);
+    L.paintMask(area, "white");
+    expect(count(L.white)).toBe(WIDTH * HEIGHT);
+  });
+});
+
+describe("undo history", () => {
+  it("undo goes back, redo forward, a new change clears redo", () => {
+    const h = new History<number>();
+    h.push(0); // 0 -> 1
+    h.push(1); // 1 -> 2
+    expect(h.undo(2)).toBe(1);
+    expect(h.undo(1)).toBe(0);
+    expect(h.undo(0)).toBe(null);
+    expect(h.redo(0)).toBe(1);
+    h.push(1); // a new change from 1
+    expect(h.canRedo).toBe(false);
+  });
+
+  it("quick edits of the same thing are one step; a different thing or a pause starts a new one", () => {
+    const h = new History<string>(60, 800);
+    h.pushMerged("a", "text.content", 1000);
+    h.pushMerged("ab", "text.content", 1300);
+    h.pushMerged("abc", "text.content", 1900);
+    h.pushMerged("abcd", "text.bold", 2000);
+    h.pushMerged("abcde", "text.bold", 5000);
+    expect(h.undo("now")).toBe("abcde");
+    expect(h.undo("x")).toBe("abcd");
+    expect(h.undo("x")).toBe("a");
+    expect(h.canUndo).toBe(false);
+  });
+
+  it("keeps a bounded number of steps", () => {
+    const h = new History<number>(3);
+    for (let i = 0; i < 10; i++) h.push(i);
+    expect([h.undo(10), h.undo(9), h.undo(8), h.undo(7)]).toEqual([9, 8, 7, null]);
+  });
+});
+
+describe("photo zoom slider", () => {
+  it("0 = fit, +5 = 6x, -5 = 1/6, and older zoom values map back to the same scale", () => {
+    expect(levelToZoom(0)).toBe(1);
+    expect(levelToZoom(5)).toBe(6);
+    expect(levelToZoom(-5)).toBeCloseTo(1 / 6, 12);
+    for (const z of [1, 1.4, 2.75, 4, 0.5, 0.2]) expect(levelToZoom(zoomToLevel(z))).toBeCloseTo(z, 12);
+    expect(zoomToLevel(2)).toBe(1);
+    expect(zoomToLevel(0.5)).toBe(-1);
   });
 });

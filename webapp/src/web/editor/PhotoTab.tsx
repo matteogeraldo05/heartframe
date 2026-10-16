@@ -1,5 +1,8 @@
 // PhotoTab.tsx - add a photo, choose how it's dithered; drag it on the preview to move it.
 import type { MessageDoc, PhotoLayer } from "../../shared/types";
+import { levelToZoom, zoomToLevel } from "./history";
+
+const fmtLevel = (v: number) => { const r = Math.round(v * 10) / 10; return (r > 0 ? "+" : "") + (r === 0 ? "0" : r.toFixed(1)); };
 
 const ALGOS: [PhotoLayer["algo"], string][] = [
   ["atkinson", "Atkinson (best for faces)"],
@@ -40,8 +43,13 @@ export function PhotoTab({ doc, hasPhoto, setPhotoLayer, onPick, onRemove }: {
               <option value="cover">Fill the frame</option><option value="contain">Fit the whole photo</option>
             </select>
           </label>
+          {/* 0 = fit; +5 = six times bigger, -5 = six times smaller (stored as a scale factor) */}
+          <label>Zoom {fmtLevel(zoomToLevel(p.zoom))}
+            <input type="range" min={-5} max={5} step={0.1} value={Math.round(zoomToLevel(p.zoom) * 10) / 10}
+              onChange={(e) => setPhotoLayer({ zoom: levelToZoom(+e.target.value) })} />
+          </label>
           {([
-            ["zoom", "Zoom", 1, 4, 0.05], ["brightness", "Brightness", -100, 100, 1], ["contrast", "Contrast", -100, 100, 1], ["gamma", "Gamma", 0.4, 2.5, 0.05],
+            ["brightness", "Brightness", -100, 100, 1], ["contrast", "Contrast", -100, 100, 1], ["gamma", "Gamma", 0.4, 2.5, 0.05],
           ] as const).map(([k, label, min, max, step]) => (
             <label key={k}>{label} {Number(p[k]).toFixed(step < 1 ? 2 : 0)}
               <input type="range" min={min} max={max} step={step} value={p[k]} onChange={(e) => setPhotoLayer({ [k]: +e.target.value })} />
@@ -56,6 +64,7 @@ export function PhotoTab({ doc, hasPhoto, setPhotoLayer, onPick, onRemove }: {
           <label className="check"><input type="checkbox" checked={p.invert} onChange={(e) => setPhotoLayer({ invert: e.target.checked })} /> Invert photo</label>
           <div className="row">
             <button type="button" onClick={() => setPhotoLayer({ panX: 0, panY: 0, offsetX: undefined, offsetY: undefined })}>Centre photo</button>
+            <button type="button" onClick={() => setPhotoLayer({ zoom: 1 })}>Reset zoom</button>
             <button type="button" onClick={onRemove}>Remove photo</button>
           </div>
         </>

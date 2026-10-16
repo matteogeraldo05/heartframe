@@ -40,11 +40,13 @@ const DocSchema = z.object({
     bullets: z.boolean().optional(),
     background: z.enum(["none", "box", "lines", "outline"]).optional(),
     outline: z.number().min(0).max(12).optional(),
+    dx: z.number().min(-800).max(800).optional(),
+    dy: z.number().min(-600).max(600).optional(),
   }),
   template: z.string().max(40),
   photo: z.object({
     fit: z.enum(["cover", "contain"]),
-    zoom: z.number().min(0.2).max(5),
+    zoom: z.number().min(0.1).max(7), // slider -5..5 = 1/6 .. 6
     offsetX: z.number().min(-1).max(1).optional(),
     offsetY: z.number().min(-1).max(1).optional(),
     panX: z.number().min(-4000).max(4000).optional(),

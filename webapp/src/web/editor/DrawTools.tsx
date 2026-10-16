@@ -1,43 +1,58 @@
-// DrawTools.tsx - brushes, stamps, selection, undo/redo. Used by the Draw tab and for custom borders.
+// DrawTools.tsx - brushes, shapes, bucket fill, stamps, selection. Used by the Draw tab and for
+// custom borders. (Undo/redo sit under the preview: they cover the whole editor.)
 import { useState } from "react";
 
 import { api } from "../api";
-import type { BrushShape } from "../render/layer";
+import type { BrushShape, ShapeKind } from "../render/layer";
 import { loadUploads, useUploads } from "../render/uploads";
 import { readUpload } from "./util";
 
-export type Tool = "pen" | "white" | "erase" | "dither" | "stamp" | "select";
+export type Tool = "pen" | "white" | "erase" | "dither" | "shape" | "fill" | "stamp" | "select";
+/** What shapes and the bucket paint with. */
+export type Ink = "black" | "white" | "dither";
 
 export interface ToolState {
   tool: Tool;
-  size: number;          // brush px, 1..64
+  size: number;          // brush px, 1..64 (also the shape outline width)
   shape: BrushShape;
-  amount: number;        // dither pen density, 1..63 of 64
+  amount: number;        // dither density, 1..63 of 64 (dither pen, and dither ink for shapes/fill)
   stamp: string;         // "heart" or an upload id
   stampSize: number;     // px
+  shapeKind: ShapeKind;
+  filled: boolean;       // shapes: filled or outline
+  ink: Ink;              // shapes and bucket fill
 }
 
-export const DEFAULT_TOOLS: ToolState = { tool: "pen", size: 4, shape: "circle", amount: 32, stamp: "heart", stampSize: 32 };
+export const DEFAULT_TOOLS: ToolState = {
+  tool: "pen", size: 4, shape: "circle", amount: 32, stamp: "heart", stampSize: 32, shapeKind: "rect", filled: false, ink: "black",
+};
 
 const TOOL_LABELS: [Tool, string][] = [
-  ["pen", "Black pen"], ["white", "White pen"], ["erase", "Eraser"], ["dither", "Dither pen"], ["stamp", "Stamp"], ["select", "Select"],
+  ["pen", "Black pen"], ["white", "White pen"], ["erase", "Eraser"], ["dither", "Dither pen"],
+  ["shape", "Shape"], ["fill", "Fill"], ["stamp", "Stamp"], ["select", "Select"],
 ];
 
-export function DrawTools({ tools, setTools, canUndo, canRedo, onUndo, onRedo, onClear, clearLabel, floating, onApply, onCancel, onDelete, borderMode, onNote }: {
+const SHAPES: [ShapeKind, string, string][] = [
+  ["ellipse", "◯", "Circle / ellipse"], ["rect", "▭", "Square / rectangle"], ["line", "╱", "Line"], ["star", "☆", "Star"], ["triangle", "△", "Triangle"],
+];
+
+export function DrawTools({ tools, setTools, onClear, clearLabel, floating, onApply, onCancel, onDelete, borderMode, onNote }: {
   tools: ToolState;
   setTools: (patch: Partial<ToolState>) => void;
-  canUndo: boolean; canRedo: boolean;
-  onUndo: () => void; onRedo: () => void; onClear: () => void;
+  onClear: () => void;
   clearLabel: string;
   floating: boolean;
   onApply: () => void; onCancel: () => void; onDelete: () => void;
-  borderMode?: boolean;  // borders are black ink only: no white pen
+  borderMode?: boolean;  // borders are black ink only: no white pen / white ink
   onNote: (s: string) => void;
 }) {
   const stamps = useUploads().filter((u) => u.info.kind === "stamp" && u.img);
   const [busy, setBusy] = useState(false);
   const t = tools.tool;
   const isBrush = t === "pen" || t === "white" || t === "erase" || t === "dither";
+  const usesInk = t === "shape" || t === "fill";
+  const showAmount = t === "dither" || (usesInk && tools.ink === "dither");
+  const inks: Ink[] = borderMode ? ["black", "dither"] : ["black", "white", "dither"];
 
   const uploadStamp = async (file: File) => {
     setBusy(true);
@@ -63,21 +78,49 @@ export function DrawTools({ tools, setTools, canUndo, canRedo, onUndo, onRedo, o
         ))}
       </div>
 
-      {isBrush && (
+      {t === "shape" && (
         <>
-          <label>Size {tools.size}px
-            <input type="range" min={1} max={64} value={tools.size} onChange={(e) => setTools({ size: +e.target.value })} />
-          </label>
-          <div className="seg" role="group" aria-label="Brush shape">
-            {(["square", "circle"] as BrushShape[]).map((s) => (
-              <button key={s} type="button" className={tools.shape === s ? "tab active" : "tab"} aria-pressed={tools.shape === s} onClick={() => setTools({ shape: s })}>
-                {s === "square" ? "■ Square" : "● Circle"}
-              </button>
+          <div className="seg" role="group" aria-label="Shape">
+            {SHAPES.map(([k, icon, label]) => (
+              <button key={k} type="button" className={tools.shapeKind === k ? "tab active shape-btn" : "tab shape-btn"} aria-pressed={tools.shapeKind === k}
+                aria-label={label} title={label} onClick={() => setTools({ shapeKind: k })}>{icon}</button>
             ))}
           </div>
+          {tools.shapeKind !== "line" && (
+            <div className="seg" role="group" aria-label="Outline or filled">
+              <button type="button" className={!tools.filled ? "tab active" : "tab"} aria-pressed={!tools.filled} onClick={() => setTools({ filled: false })}>Outline</button>
+              <button type="button" className={tools.filled ? "tab active" : "tab"} aria-pressed={tools.filled} onClick={() => setTools({ filled: true })}>Filled</button>
+            </div>
+          )}
+          <p className="hint">Press and drag on the preview. Hold Shift for a perfect circle / square (or a straight 45° line).</p>
         </>
       )}
-      {t === "dither" && (
+      {t === "fill" && <p className="hint">Click an area to fill it (everything connected that is the same colour).</p>}
+      {usesInk && (
+        <div className="seg" role="group" aria-label="Paint with">
+          {inks.map((k) => (
+            <button key={k} type="button" className={tools.ink === k ? "tab active" : "tab"} aria-pressed={tools.ink === k} onClick={() => setTools({ ink: k })}>
+              {k === "black" ? "Black" : k === "white" ? "White" : "Dither"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(isBrush || (t === "shape" && (!tools.filled || tools.shapeKind === "line"))) && (
+        <label>{t === "shape" ? "Line width" : "Size"} {tools.size}px
+          <input type="range" min={1} max={64} value={tools.size} onChange={(e) => setTools({ size: +e.target.value })} />
+        </label>
+      )}
+      {isBrush && (
+        <div className="seg" role="group" aria-label="Brush shape">
+          {(["square", "circle"] as BrushShape[]).map((s) => (
+            <button key={s} type="button" className={tools.shape === s ? "tab active" : "tab"} aria-pressed={tools.shape === s} onClick={() => setTools({ shape: s })}>
+              {s === "square" ? "■ Square" : "● Circle"}
+            </button>
+          ))}
+        </div>
+      )}
+      {showAmount && (
         <label>Amount {Math.round((tools.amount / 64) * 100)}%
           <input type="range" min={1} max={63} value={tools.amount} onChange={(e) => setTools({ amount: +e.target.value })} />
         </label>
@@ -107,7 +150,7 @@ export function DrawTools({ tools, setTools, canUndo, canRedo, onUndo, onRedo, o
       )}
       {t === "select" && (
         <>
-          <p className="hint">Drag a box around part of your drawing, then drag it to move it or pull the handles to resize. Enter applies, Esc puts it back.</p>
+          <p className="hint">Drag a box around part of your drawing. Then drag it to move it, pull the square handles to resize, or the round handle on top to rotate (Shift snaps to 15°). Enter applies, Esc puts it back.</p>
           {floating && (
             <div className="row">
               <button type="button" className="primary" onClick={onApply}>Apply</button>
@@ -119,8 +162,6 @@ export function DrawTools({ tools, setTools, canUndo, canRedo, onUndo, onRedo, o
       )}
 
       <div className="row">
-        <button type="button" disabled={!canUndo} onClick={onUndo} title="Undo (Ctrl/Cmd+Z)">↶ Undo</button>
-        <button type="button" disabled={!canRedo} onClick={onRedo} title="Redo (Ctrl/Cmd+Shift+Z)">↷ Redo</button>
         <button type="button" onClick={onClear}>{clearLabel}</button>
       </div>
     </div>
